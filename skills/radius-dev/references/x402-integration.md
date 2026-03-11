@@ -204,14 +204,6 @@ Use a hosted facilitator when:
 - You want lower operational overhead.
 - You want to validate demand before running settlement infrastructure.
 
-**Radius x402 facilitator** (deploying to testnet):
-
-- URL: `facilitator.testnet.radiustech.xyz`
-- TypeScript-based, compatible with existing x402 client libraries and middleware.
-- Supports per-request payments and HLS streaming payments.
-- Free to use — facilitator absorbs gas fees.
-- Repository: [github.com/radiustechsystems/x402-facilitator](https://github.com/radiustechsystems/x402-facilitator)
-
 **Stablecoin.xyz** provides x402-compatible facilitator tooling for Radius:
 
 - [Stablecoin.xyz x402 overview](https://docs.stablecoin.xyz/x402/overview)
