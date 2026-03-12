@@ -24,6 +24,27 @@ curl -L https://foundry.paradigm.xyz | bash
 foundryup
 ```
 
+## Wallet setup (one-time)
+
+Import your private key into Foundry's encrypted keystore so it never appears in shell history or process listings:
+
+```bash
+cast wallet import radius-deployer --interactive
+# Enter private key: <paste key, input is hidden>
+# Enter password:    <choose a password, input is hidden>
+# `radius-deployer` keystore was saved successfully. Address: 0x...
+```
+
+The keystore is saved to `~/.foundry/keystores/radius-deployer`. You can list stored accounts with:
+
+```bash
+cast wallet list
+```
+
+Every `forge` and `cast` command below uses `--account radius-deployer` which prompts for the password at runtime. The account name is arbitrary — use whatever you like.
+
+> **⚠️ Never use `--private-key` on the command line.** It exposes the key in shell history and `ps aux` output.
+
 ## Create a project
 
 ```bash
@@ -54,13 +75,9 @@ contract Counter {
 ## Deploy with forge create
 
 ```bash
-# Set your private key
-export PRIVATE_KEY=0x...
-
-# Deploy
 forge create src/Counter.sol:Counter \
   --rpc-url https://rpc.testnet.radiustech.xyz \
-  --private-key $PRIVATE_KEY
+  --account radius-deployer
 ```
 
 Output:
@@ -76,7 +93,7 @@ Transaction hash: 0x...
 ```bash
 forge create src/Token.sol:Token \
   --rpc-url https://rpc.testnet.radiustech.xyz \
-  --private-key $PRIVATE_KEY \
+  --account radius-deployer \
   --constructor-args "My Token" "MTK" 18
 ```
 
@@ -104,7 +121,7 @@ contract DeployScript is Script {
 ```bash
 forge script script/Deploy.s.sol \
   --rpc-url https://rpc.testnet.radiustech.xyz \
-  --private-key $PRIVATE_KEY \
+  --account radius-deployer \
   --broadcast
 ```
 
@@ -134,7 +151,7 @@ cast call 0xContractAddress "count()" \
 # Write state
 cast send 0xContractAddress "increment()" \
   --rpc-url https://rpc.testnet.radiustech.xyz \
-  --private-key $PRIVATE_KEY
+  --account radius-deployer
 ```
 
 ### Using viem (TypeScript)
@@ -226,7 +243,7 @@ contract Token is ERC20 {
 ```bash
 forge create src/Token.sol:Token \
   --rpc-url https://rpc.testnet.radiustech.xyz \
-  --private-key $PRIVATE_KEY \
+  --account radius-deployer \
   --constructor-args "My Token" "MTK"
 ```
 
@@ -485,7 +502,7 @@ If gas estimation fails, try setting an explicit gas limit:
 ```bash
 forge create src/Contract.sol:Contract \
   --rpc-url https://rpc.testnet.radiustech.xyz \
-  --private-key $PRIVATE_KEY \
+  --account radius-deployer \
   --gas-limit 3000000
 ```
 
@@ -518,5 +535,5 @@ Then deploy with the profile:
 ```bash
 forge create src/Counter.sol:Counter \
   --rpc-url radius_testnet \
-  --private-key $PRIVATE_KEY
+  --account radius-deployer
 ```

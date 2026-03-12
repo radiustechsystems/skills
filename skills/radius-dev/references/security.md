@@ -395,11 +395,13 @@ Despite the architectural improvements, all standard smart contract security pra
 ## Client-Side Checklist
 
 ### Key Management
-- [ ] Private keys stored in environment variables, never hardcoded
+- [ ] Foundry CLI commands use `--account <name>` (encrypted keystore), never `--private-key`
+- [ ] Private keys for TypeScript/Node.js read from environment variables via `process.env`, never passed as CLI arguments
 - [ ] `.env` files added to `.gitignore`
 - [ ] Different keys used for development, testnet, and production
-- [ ] Keys never logged, displayed, or transmitted
+- [ ] Keys never logged, displayed, or transmitted to shell history or process listings
 - [ ] Production keys managed via secrets manager or hardware wallet
+- [ ] Keystore created with `cast wallet import <name> --interactive` (key never touches shell history)
 
 ### Transaction Safety
 - [ ] Transactions are simulated before sending where feasible (`eth_call` / `eth_estimateGas`)
