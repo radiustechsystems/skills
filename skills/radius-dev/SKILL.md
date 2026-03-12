@@ -171,7 +171,7 @@ Always be explicit about:
 - Sub-second finality (no need to wait for multiple confirmations)
 - SBC uses 6 decimals (use `parseUnits(amount, 6)`, NOT `parseEther`)
 - RUSD (native token) uses 18 decimals (use `parseEther` for native transfers)
-- Environment variables for private keys (never hardcode)
+- Foundry keystore for CLI deploys (`--account`), environment variables for TypeScript — never pass private keys as CLI arguments
 - Gas price comes from transaction cost API, not from defaults
 
 ### 4. Watch for production gotchas
