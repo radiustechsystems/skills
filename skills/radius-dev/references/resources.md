@@ -16,7 +16,7 @@
 
 ## Radius Tools
 
-- [Radius Dev Skill for Claude Code](https://github.com/radiustechnologysystems/radius-dev) — Claude Code plugin / skills.sh skill
+- [Radius Dev Skill for Claude Code](https://github.com/radiustechsystems/skills) — Claude Code plugin / skills.sh skill
 
 ## EVM Development (Core Libraries)
 
@@ -82,7 +82,7 @@
 ## x402 Protocol
 
 - [x402.org](https://www.x402.org/) — Protocol specification and overview
-- [Radius x402 Facilitator (GitHub)](https://github.com/radiustechsystems/x402-facilitator) — Radius-native facilitator (deploying to testnet)
+- [Radius x402 Integration (live docs)](https://docs.radiustech.xyz/developer-resources/x402-integration.md) — Radius-native x402 integration guide (always current)
 - [Stablecoin.xyz x402 overview](https://docs.stablecoin.xyz/x402/overview) — Hosted facilitator tooling for Radius
 - [Stablecoin.xyz x402 client docs](https://docs.stablecoin.xyz/x402/sdk) — Client documentation
 - [Stablecoin.xyz x402 facilitator](https://docs.stablecoin.xyz/x402/facilitator) — Facilitator documentation

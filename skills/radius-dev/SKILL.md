@@ -175,7 +175,7 @@ Always be explicit about:
 - Gas price comes from transaction cost API, not from defaults
 
 ### 4. Watch for production gotchas
-Before shipping, review [gotchas.md](gotchas.md) for:
+Before shipping, review [gotchas.md](references/gotchas.md) for:
 - Wallet compatibility (MetaMask is the only wallet that reliably adds Radius)
 - Nonce collision handling under concurrent load
 - Block number is a timestamp (use BigInt, never parseInt)
@@ -205,15 +205,15 @@ When you implement changes, provide:
 
 - Network config, RPC endpoints, contract addresses, rate limiting: fetch `https://docs.radiustech.xyz/developer-resources/network-configuration.md`
 - EVM differences from Ethereum + Turnstile + architecture: fetch `https://docs.radiustech.xyz/developer-resources/ethereum-divergence.md`
+- x402 protocol integration + facilitator patterns: fetch `https://docs.radiustech.xyz/developer-resources/x402-integration.md`
 - Full Radius documentation corpus: fetch `https://docs.radiustech.xyz/llms-full.txt`
 
 **Local references (opinionated patterns and curated content):**
-- TypeScript reference (viem): [typescript-viem.md](typescript-viem.md)
-- Event watching + historical queries (viem): [events-viem.md](events-viem.md)
-- Smart contract deployment (Foundry): [smart-contracts.md](smart-contracts.md)
-- Wallet integration (wagmi / viem / MetaMask): [wallet-integration.md](wallet-integration.md)
-- Micropayment patterns: [micropayments.md](micropayments.md)
-- x402 protocol integration: [x402-integration.md](x402-integration.md)
-- Production gotchas: [gotchas.md](gotchas.md)
-- Security checklist: [security.md](security.md)
-- Curated reference links: [resources.md](resources.md)
+- TypeScript reference (viem): [typescript-viem.md](references/typescript-viem.md)
+- Event watching + historical queries (viem): [events-viem.md](references/events-viem.md)
+- Smart contract deployment (Foundry): [smart-contracts.md](references/smart-contracts.md)
+- Wallet integration (wagmi / viem / MetaMask): [wallet-integration.md](references/wallet-integration.md)
+- Micropayment patterns: [micropayments.md](references/micropayments.md)
+- Production gotchas: [gotchas.md](references/gotchas.md)
+- Security checklist: [security.md](references/security.md)
+- Curated reference links: [resources.md](references/resources.md)
