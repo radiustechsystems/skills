@@ -190,11 +190,11 @@ Also add a ~200ms delay between consecutive transactions. Without it, the RPC so
 
 ## 8. EIP-2612 permit signing — domain must match exactly
 
-The SBC token uses EIP-2612 permits. The EIP-712 domain must match what the token contract was deployed with:
+The Stable Coin token uses EIP-2612 permits. The EIP-712 domain must match what the token contract was deployed with:
 
 ```typescript
 const domain = {
-  name: 'SBC',          // NOT "SBC Token", NOT "Radius SBC"
+  name: 'Stable Coin',          // NOT "SBC", NOT "Radius SBC"
   version: '1',         // String "1", not number 1
   chainId: 723,         // Actual chain ID as a number
   verifyingContract: '0x33ad9e4bd16b69b5bfded37d8b5d9ff9aba014fb',

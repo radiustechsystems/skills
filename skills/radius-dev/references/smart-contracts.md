@@ -317,7 +317,7 @@ forge test --fork-url https://rpc.testnet.radiustech.xyz
 Radius uses stablecoin fees instead of native gas:
 
 - **Fee token**: RUSD
-- **Gas price**: Returns `0x0` from RPC (fees are calculated differently via Turnstile)
+- **Gas price**: Fixed ~986M wei (~1 gwei) from `eth_gasPrice`. Use the transaction cost API for the most reliable value. `eth_maxPriorityFeePerGas` returns `0x0` (no priority fee bidding).
 - **Fixed cost**: ~0.0001 USD per transaction
 - **Failed transactions**: Do NOT charge gas (unlike Ethereum)
 

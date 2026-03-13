@@ -4,13 +4,15 @@
 
 Radius Network works with all major Ethereum-compatible wallets through the EIP-1193 standard. The same integration code works across different wallet implementations.
 
-**Supported wallets:**
-- **MetaMask** — Industry standard browser extension
-- **Rainbow** — Mobile-first wallet with excellent UX
-- **WalletConnect** — QR-code based connection for mobile wallets
-- **Coinbase Wallet** — Native web3 support
-- **Trust Wallet** — Mobile wallet with dApp browser
-- **Any EIP-1193 provider** — Direct integration via `window.ethereum`
+**Wallet compatibility:**
+- **MetaMask** — Reliably adds and switches to Radius via `wallet_addEthereumChain`. **Recommended.**
+- **Coinbase Wallet** — May reject adding unknown chains. Show as "Coming Soon" in your UI.
+- **Trust Wallet** — May reject adding unknown chains. Show as "Coming Soon" in your UI.
+- **Rainbow** — May reject adding unknown chains. Show as "Coming Soon" in your UI.
+- **WalletConnect** — QR-code based connection for mobile wallets. Behavior varies by the underlying wallet.
+- **Any EIP-1193 provider** — Direct integration via `window.ethereum`, but custom chain support varies.
+
+> **⚠️ MetaMask is currently the only wallet that reliably adds Radius as a custom network.** Other wallets may silently fail at chain-add time. Design your UI to handle this gracefully — show unsupported wallets as "Coming Soon" rather than letting users encounter confusing errors. See [gotchas.md](gotchas.md) for details.
 
 ## Add Radius Network to wallets
 
