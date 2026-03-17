@@ -42,7 +42,12 @@ Always fetch gas price from the transaction cost API — do not rely on viem def
 
 ```typescript
 const res = await fetch('https://rpc.radiustech.xyz/api/v1/network/transaction-cost');
+if (!res.ok) throw new Error(`gas price fetch failed: ${res.status}`);
 const { gas_price_wei } = await res.json();
+const gasPrice = BigInt(gas_price_wei);
+// Sanity bound — protects against a compromised endpoint returning an inflated gas price
+const MAX_GAS_PRICE_WEI = BigInt('1000000000000'); // ~1000 gwei ceiling
+if (gasPrice <= 0n || gasPrice > MAX_GAS_PRICE_WEI) throw new Error(`gas_price_wei out of range: ${gasPrice}`);
 ```
 
 SBC stablecoin uses 6 decimals — use `parseUnits(amount, 6)`, not `parseEther`.
