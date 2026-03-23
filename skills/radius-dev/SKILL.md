@@ -47,7 +47,8 @@ Use this Skill when the user asks for:
 | Native currency | RUSD (18 decimals) | RUSD (18 decimals) |
 | SBC token (ERC-20) | — | `0x33ad9e4bd16b69b5bfded37d8b5d9ff9aba014fb` (6 decimals) |
 | Explorer | `https://testnet.radiustech.xyz` | `https://network.radiustech.xyz` |
-| Faucet | `https://testnet.radiustech.xyz/testnet/faucet` | Not available |
+| Faucet (for humans) | `https://testnet.radiustech.xyz/wallet` | `https://network.radiustech.xyz/wallet` |
+| Faucet (for agents) | See **dripping-faucet** skill | Coming Soon |
 | Transaction cost API | `https://testnet.radiustech.xyz/api/v1/network/transaction-cost` | `https://network.radiustech.xyz/api/v1/network/transaction-cost` |
 
 5) **Fees: Stablecoin-native via Turnstile**
@@ -185,7 +186,7 @@ Before shipping, review [gotchas.md](references/gotchas.md) for:
 ### 5. Test
 - Smart contracts: `forge test` locally, then deploy to Radius Testnet
 - TypeScript scripts: Run against testnet RPC with funded test accounts
-- Get testnet tokens from `https://testnet.radiustech.xyz/testnet/faucet`
+- Get testnet tokens: use the **dripping-faucet** skill for programmatic access, or the [web faucet](https://testnet.radiustech.xyz/wallet) manually
 - Verify deployments: `cast code <address> --rpc-url https://rpc.testnet.radiustech.xyz`
 
 ### 6. Deliverables expectations
