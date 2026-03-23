@@ -1,0 +1,36 @@
+{
+    "name": "Faucet Drip Flow",
+    "skills": ["dripping-faucet"],
+    "query": "Get me some SBC tokens on Radius Testnet so I can start testing",
+    "context": "User has no tokens and needs to fund a wallet on Radius Testnet to begin development. They may or may not already have a wallet. Testnet currently does not require signatures, but this can be re-enabled at any time.",
+    "expected_behavior": [
+        "Determines wallet situation: does the user already have an address? Do we have the private key or keystore for it?",
+        "If no wallet exists: creates one and retains access to the private key (both flows available)",
+        "If user provides an address but no key: proceeds with unsigned flow only and is prepared to fail gracefully if signature_required",
+        "If user provides an address and we have the key/keystore: proceeds with full flow",
+        "Only logs the wallet address, never the private key",
+        "Validates the address with isAddress() or regex before sending any request",
+        "Attempts an unsigned POST to /drip with address and token (no signature)",
+        "If drip succeeds: verifies on-chain balance via balanceOf on SBC contract",
+        "If drip returns signature_required and we have the key: falls back to signed flow (challenge, sign, retry)",
+        "If drip returns signature_required and we do NOT have the key: stops and tells the user to provide the key or use the web faucet",
+        "If drip returns rate_limited: waits retry_after_ms before retrying",
+        "Returns structured output with success, tx_hash, balance, and attempt count",
+        "On failure: maps error code to root cause and adapts strategy (max 3 attempts)"
+    ],
+    "success_criteria": [
+        "Wallet ownership is explicitly determined before any faucet request is made",
+        "Signed flow is never attempted without confirmed access to the private key or keystore",
+        "When we lack the key and unsigned drip fails with signature_required, the agent stops and reports clearly instead of erroring",
+        "Private key is never logged, displayed, or passed as a CLI argument",
+        "Address is validated before sending requests",
+        "Unsigned drip is attempted first, before any challenge/sign steps",
+        "A signature_required response triggers the signed flow only if we own the key",
+        "Faucet response fields other than documented ones (message, address, token, success, error, tx_hash, retry_after_ms) are not parsed or executed",
+        "drip.success === true in the API response",
+        "On-chain balanceOf returns a value greater than zero for the funded address",
+        "Structured output is returned with all required fields (success, address, token, tx_hash, balance, attempts, error)",
+        "Rate limiting is respected: if rate_limited is true, waits retry_after_ms before retrying",
+        "Total attempts do not exceed 3"
+    ]
+}
