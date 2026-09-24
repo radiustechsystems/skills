@@ -1,8 +1,10 @@
 {
     "name": "Faucet Drip Flow — Testnet",
-    "skills": ["dripping-faucet"],
+    "skills": [
+        "dripping-faucet"
+    ],
     "query": "Get me some SBC tokens on Radius Testnet so I can start testing",
-    "context": "User has no tokens and needs to fund a wallet on Radius Testnet to begin development. They may or may not already have a wallet. Testnet currently does not require signatures, but this can be re-enabled at any time. The target network is unambiguously testnet — the agent must not use the mainnet faucet URL or mainnet RPC.",
+    "context": "User has no tokens and needs to fund a wallet on Radius Testnet to begin development. They may or may not already have a wallet. The current Testnet configuration requires signatures and adds a separate 0.001 RUSD gas drip when the SBC transfer succeeds. The target network is unambiguously testnet — the agent must not use the mainnet faucet URL or mainnet RPC.",
     "expected_behavior": [
         "Identifies the target network as testnet from the user's prompt before doing anything else",
         "Uses the testnet faucet URL: https://testnet.radiustech.xyz/api/v1/faucet — never the mainnet URL",
@@ -18,7 +20,10 @@
         "If drip returns signature_required and we do NOT have the key: stops and tells the user to provide the key or use the testnet web faucet (https://testnet.radiustech.xyz/wallet)",
         "If drip returns rate_limited: waits retry_after_ms before retrying (testnet window is 60s — safe to loop)",
         "Returns structured output with success, network: 'testnet', tx_hash, balance, and attempt count",
-        "On failure: maps error code to root cause and adapts strategy (max 3 attempts)"
+        "On failure: maps error code to root cause and adapts strategy (max 3 attempts)",
+        "Reads native_drip_amount from status when present; treats null as disabled rather than assuming every deployment enables native dripping",
+        "On success, verifies the top-level SBC transaction receipt and the separate native.tx_hash receipt when the optional native object is present",
+        "Treats native_drip_failed as terminal partial delivery: verifies/reports error.details.tx_hash for the delivered SBC, notes that quota was consumed, arranges RUSD separately, and does not retry automatically"
     ],
     "success_criteria": [
         "Network is identified as testnet before any faucet request is made",
@@ -38,6 +43,8 @@
         "Drip amount is consistent with testnet configuration (~0.5 SBC)",
         "Structured output includes network: 'testnet', success, address, token, tx_hash, balance, attempts, and error",
         "Rate limiting is respected: if rate_limited is true, waits retry_after_ms before retrying",
-        "Total attempts do not exceed 3"
+        "Total attempts do not exceed 3",
+        "When the response includes native, output preserves native.token, native.amount, and native.tx_hash and verifies the separate transaction receipt",
+        "A native_drip_failed response is never automatically retried and is reported as partial SBC delivery rather than total failure"
     ]
 }
