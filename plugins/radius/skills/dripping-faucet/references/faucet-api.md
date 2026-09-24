@@ -18,6 +18,7 @@ All endpoints return `Content-Type: application/json`.
 | Setting | Value |
 |---------|-------|
 | Drip amount | ~0.5 SBC per request |
+| Native gas top-up | Source configuration: 0.001 RUSD; confirm with `native_drip_amount` at runtime |
 | Rate limit | 5 requests per 60-second window |
 | Signature required | **Yes in the current deployment** |
 
@@ -26,12 +27,13 @@ All endpoints return `Content-Type: application/json`.
 | Setting | Value |
 |---------|-------|
 | Drip amount | ~0.01 SBC per request |
+| Native gas top-up | Source configuration: 0.001 RUSD; confirm with `native_drip_amount` at runtime |
 | Rate limit | 1 requests per 24-hour window |
 | Signature required | **Yes in the current deployment** |
 
 ### Configuration Reminder
 
-The OpenAPI schema marks `signature` as optional because enforcement is controlled by server configuration. Live verification on 2026-08-21 showed that both deployed services require it. Always use the runtime response as the source of truth and handle `signature_required` and `rate_limited` on either network.
+The OpenAPI schema marks `signature` as optional because enforcement is controlled by server configuration. Live verification on 2026-08-21 showed that both deployed services require it. Native RUSD is independently configurable: current source configuration enables `0.001` RUSD on both networks, but this was not live-validated during this maintenance run. Always use the runtime response as the source of truth and handle `signature_required`, `rate_limited`, and a nullable `native_drip_amount` on either network.
 
 ---
 
@@ -55,7 +57,8 @@ Check rate-limit status and drip amount before requesting tokens.
   "rate_limited": false,
   "retry_after_ms": null,
   "remaining_requests": 5,
-  "drip_amount": "0.5"
+  "drip_amount": "0.5",
+  "native_drip_amount": "0.001"
 }
 ```
 
@@ -67,6 +70,7 @@ Check rate-limit status and drip amount before requesting tokens.
 | `retry_after_ms` | number \| null | Milliseconds to wait before retrying. `null` when not rate limited. |
 | `remaining_requests` | number | Requests remaining in the current window |
 | `drip_amount` | string | Amount of tokens per drip (human-readable, e.g. `"0.5"` = 0.5 SBC) |
+| `native_drip_amount` | string \| null | Native RUSD sent in a separate transaction, in whole units. `null` when disabled. |
 
 **Agent logic:** If `rate_limited` is `true`, wait `retry_after_ms` before proceeding.
 
@@ -133,7 +137,12 @@ Request a token drip. The field is optional in the schema, but both current depl
   "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2BD38",
   "token": "SBC",
   "amount": "0.5",
-  "tx_hash": "0xabc123..."
+  "tx_hash": "0xabc123...",
+  "native": {
+    "token": "RUSD",
+    "amount": "0.001",
+    "tx_hash": "0xdef456..."
+  }
 }
 ```
 
@@ -144,6 +153,10 @@ Request a token drip. The field is optional in the schema, but both current depl
 | `token` | string | Token symbol |
 | `amount` | string | Amount sent (human-readable) |
 | `tx_hash` | string | On-chain transaction hash |
+| `native` | object | Optional native RUSD gas top-up. Absent when disabled. |
+| `native.token` | string | Always `RUSD`. |
+| `native.amount` | string | Native RUSD sent, in whole units. |
+| `native.tx_hash` | string | Hash of the separate native RUSD transfer. |
 
 ### Error Response `4xx / 5xx`
 
@@ -177,7 +190,8 @@ Request a token drip. The field is optional in the schema, but both current depl
 | `invalid_signature` | 400 | Signature does not match the address or challenge is stale | Re-fetch challenge from `/challenge`, re-sign, and retry |
 | `invalid_request` | 400 | Address, token, signature, or other input is invalid | Validate the address and use `SBC`; inspect `error.message` for detail |
 | `rate_limited` | 429 | Too many requests from this address | Wait `retry_after_ms`, then retry |
-| `faucet_empty` | 503 | Faucet wallet has insufficient funds | Stop retrying. Report to user. Try again in minutes/hours. |
+| `faucet_empty` | 503 | Faucet wallet lacks SBC or native RUSD for the full configured drip; nothing was broadcast | Stop retrying. Report to user. Try again later. |
+| `native_drip_failed` | 500 | SBC succeeded, but the separate RUSD gas top-up failed; `error.details.tx_hash` is the SBC transaction | Do not retry immediately. Verify SBC, preserve the hash, and arrange separate RUSD funding or report it to the operator. |
 | `sbc_not_configured` | 503 | SBC token not configured on the server | Stop retrying. Report to user. Contact faucet operator. |
 | `faucet_not_configured` | 503 | Faucet wallet or network configuration is unavailable | Stop retrying. Report to the faucet operator. |
 | `transaction_reverted` | 500 | The faucet transaction reverted | Stop and report the request ID and details. |
@@ -190,12 +204,12 @@ Request a token drip. The field is optional in the schema, but both current depl
 
 ## On-Chain Verification
 
-After a successful drip, verify the balance on-chain. The on-chain state is the ground truth — not the API response.
+After a successful drip, verify SBC on-chain. When the response includes `native`, also verify the native RUSD balance and retain its separate transaction hash. On-chain state is the ground truth.
 
 ### viem
 
 ```typescript
-import { createPublicClient, http, erc20Abi, formatUnits } from 'viem';
+import { createPublicClient, http, erc20Abi, formatEther, formatUnits } from 'viem';
 
 const SBC_CONTRACT = '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb';
 const SBC_DECIMALS = 6;
@@ -213,6 +227,8 @@ const balance = await publicClient.readContract({
 });
 
 console.log('SBC balance:', formatUnits(balance, SBC_DECIMALS));
+const nativeBalance = await publicClient.getBalance({ address });
+console.log('Native RUSD balance:', formatEther(nativeBalance));
 ```
 
 ### radius-cli
