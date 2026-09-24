@@ -20,6 +20,7 @@ All endpoints return `Content-Type: application/json`.
 | Drip amount | ~0.5 SBC per request |
 | Rate limit | 5 requests per 60-second window |
 | Signature required | **Yes in the current deployment** |
+| Native gas drip | 0.001 RUSD in repository configuration |
 
 ### Current Mainnet Configuration
 
@@ -28,6 +29,7 @@ All endpoints return `Content-Type: application/json`.
 | Drip amount | ~0.01 SBC per request |
 | Rate limit | 1 requests per 24-hour window |
 | Signature required | **Yes in the current deployment** |
+| Native gas drip | 0.001 RUSD in repository configuration |
 
 ### Configuration Reminder
 
@@ -55,7 +57,8 @@ Check rate-limit status and drip amount before requesting tokens.
   "rate_limited": false,
   "retry_after_ms": null,
   "remaining_requests": 5,
-  "drip_amount": "0.5"
+  "drip_amount": "0.5",
+  "native_drip_amount": "0.001"
 }
 ```
 
@@ -67,6 +70,7 @@ Check rate-limit status and drip amount before requesting tokens.
 | `retry_after_ms` | number \| null | Milliseconds to wait before retrying. `null` when not rate limited. |
 | `remaining_requests` | number | Requests remaining in the current window |
 | `drip_amount` | string | Amount of tokens per drip (human-readable, e.g. `"0.5"` = 0.5 SBC) |
+| `native_drip_amount` | string \| null | Native RUSD sent alongside the SBC drip in whole units; `null` when disabled for the environment |
 
 **Agent logic:** If `rate_limited` is `true`, wait `retry_after_ms` before proceeding.
 
@@ -133,7 +137,12 @@ Request a token drip. The field is optional in the schema, but both current depl
   "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2BD38",
   "token": "SBC",
   "amount": "0.5",
-  "tx_hash": "0xabc123..."
+  "tx_hash": "0xabc123...",
+  "native": {
+    "token": "RUSD",
+    "amount": "0.001",
+    "tx_hash": "0xdef456..."
+  }
 }
 ```
 
@@ -143,7 +152,11 @@ Request a token drip. The field is optional in the schema, but both current depl
 | `address` | string | Funded address |
 | `token` | string | Token symbol |
 | `amount` | string | Amount sent (human-readable) |
-| `tx_hash` | string | On-chain transaction hash |
+| `tx_hash` | string | On-chain transaction hash for the SBC transfer |
+| `native` | object | Optional native RUSD transfer; absent when native dripping is disabled |
+| `native.token` | string | `RUSD` |
+| `native.amount` | string | Native amount in whole units, currently configured as `"0.001"` on both networks |
+| `native.tx_hash` | string | Hash of the separate native RUSD transaction |
 
 ### Error Response `4xx / 5xx`
 
@@ -177,7 +190,8 @@ Request a token drip. The field is optional in the schema, but both current depl
 | `invalid_signature` | 400 | Signature does not match the address or challenge is stale | Re-fetch challenge from `/challenge`, re-sign, and retry |
 | `invalid_request` | 400 | Address, token, signature, or other input is invalid | Validate the address and use `SBC`; inspect `error.message` for detail |
 | `rate_limited` | 429 | Too many requests from this address | Wait `retry_after_ms`, then retry |
-| `faucet_empty` | 503 | Faucet wallet has insufficient funds | Stop retrying. Report to user. Try again in minutes/hours. |
+| `faucet_empty` | 503 | Preflight found insufficient SBC, native RUSD, gas, or configured reserve; nothing was broadcast | Stop retrying. Report to user. Try again later. |
+| `native_drip_failed` | 500 | SBC succeeded but the separate RUSD gas drip failed; `error.details.tx_hash` is the SBC transaction and quota was consumed | Treat as terminal partial delivery. Verify/report the SBC transaction, arrange RUSD funding separately, and do not retry automatically. |
 | `sbc_not_configured` | 503 | SBC token not configured on the server | Stop retrying. Report to user. Contact faucet operator. |
 | `faucet_not_configured` | 503 | Faucet wallet or network configuration is unavailable | Stop retrying. Report to the faucet operator. |
 | `transaction_reverted` | 500 | The faucet transaction reverted | Stop and report the request ID and details. |
@@ -190,7 +204,7 @@ Request a token drip. The field is optional in the schema, but both current depl
 
 ## On-Chain Verification
 
-After a successful drip, verify the balance on-chain. The on-chain state is the ground truth — not the API response.
+After a successful drip, verify the top-level SBC transaction receipt and, when `native` is present, the separate native RUSD transaction receipt. A balance alone can predate this request, so the receipts are the ground truth for this drip.
 
 ### viem
 
