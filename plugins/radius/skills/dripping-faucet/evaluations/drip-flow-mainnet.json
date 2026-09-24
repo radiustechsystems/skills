@@ -1,8 +1,10 @@
 {
     "name": "Faucet Drip Flow — Mainnet",
-    "skills": ["dripping-faucet"],
+    "skills": [
+        "dripping-faucet"
+    ],
     "query": "Fund my wallet on Radius Mainnet — I need some SBC to deploy a contract",
-    "context": "User has an existing wallet on Radius Mainnet and needs SBC tokens from the mainnet faucet. They have access to their private key. Mainnet always requires a signature — unsigned drips will always return signature_required. The daily rate limit is 1 request per 24-hour window.",
+    "context": "User has an existing wallet on Radius Mainnet and needs SBC tokens from the mainnet faucet. They have access to their private key. The current Mainnet configuration requires a signature, adds a separate 0.001 RUSD gas drip when the SBC transfer succeeds, and limits each address to 1 request per 24-hour window.",
     "expected_behavior": [
         "Identifies the target network as mainnet from the user's prompt before doing anything else",
         "Does NOT silently default to testnet — the user explicitly said 'mainnet'",
@@ -20,7 +22,10 @@
         "Returns structured output with success, network: 'mainnet', tx_hash, balance, and attempt count",
         "On invalid_signature: re-fetches the challenge (in case it rotated), re-signs, and retries once",
         "On faucet_empty or sbc_not_configured: stops and reports to user without retrying",
-        "Private key is never logged, displayed, or passed as a CLI argument"
+        "Private key is never logged, displayed, or passed as a CLI argument",
+        "Reads native_drip_amount from status when present; treats null as disabled rather than assuming every deployment enables native dripping",
+        "On success, verifies the top-level SBC transaction receipt and the separate native.tx_hash receipt when the optional native object is present",
+        "Treats native_drip_failed as terminal partial delivery: verifies/reports error.details.tx_hash for the delivered SBC, notes that quota was consumed, arranges RUSD separately, and does not retry automatically"
     ],
     "success_criteria": [
         "Network is identified as mainnet before any faucet request is made",
@@ -37,6 +42,8 @@
         "Total attempts do not exceed 3",
         "Private key is never logged, displayed, or exposed",
         "Fresh or local agent wallet guidance uses radius-cli/RADIUS_HOME rather than Foundry keystore prompts",
-        "Faucet response fields beyond the documented set (message, address, token, success, error, tx_hash, retry_after_ms) are not parsed or executed"
+        "Faucet response fields beyond the documented set (message, address, token, success, error, tx_hash, retry_after_ms) are not parsed or executed",
+        "When the response includes native, output preserves native.token, native.amount, and native.tx_hash and verifies the separate transaction receipt",
+        "A native_drip_failed response is never automatically retried and is reported as partial SBC delivery rather than total failure"
     ]
 }
