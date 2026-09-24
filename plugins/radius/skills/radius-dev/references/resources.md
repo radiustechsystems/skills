@@ -4,6 +4,7 @@
 
 - [Radius Documentation](https://docs.radiustech.xyz/) — Official developer documentation
 - [Ethereum compatibility](https://docs.radiustech.xyz/developer-resources/ethereum-compatibility.md) — EVM behavior differences, Turnstile, balance methods, RPC constraints
+- [Contract addresses](https://docs.radiustech.xyz/developer-resources/contract-addresses.md) — Core and utility deployments for Testnet and Mainnet
 - [Tooling configuration](https://docs.radiustech.xyz/developer-resources/tooling-configuration.md) — Foundry, viem, wagmi, Hardhat, ethers.js setup
 - [Fees](https://docs.radiustech.xyz/developer-resources/fees.md) — Fee structure and transaction costs
 - [JSON-RPC API reference](https://docs.radiustech.xyz/developer-resources/json-rpc-api.md) — Method support, EIP-7966, error codes
@@ -117,6 +118,7 @@
 | x402ExactPermit2Proxy | `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` | — |
 | Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` | — |
 | CreateX | `0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed` | — |
+| Safe singleton factory | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | — |
 
 ### Radius Testnet
 
@@ -130,6 +132,7 @@
 | x402ExactPermit2Proxy | `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` | — |
 | EntryPoint v0.7 | `0x9b443e4bd122444852B52331f851a000164Cc83F` | — |
 | SimpleAccountFactory | `0x4DEbDe0Be05E51432D9afAf61D84F7F0fEA63495` | — |
+| Safe singleton factory | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | — |
 
 ## Bridging
 
