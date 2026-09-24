@@ -441,6 +441,15 @@ Radius has the Arachnid Create2 Factory deployed at the canonical address:
 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed
 ```
 
+### Safe singleton factory
+
+Safe's presigned singleton factory is deployed at the same address on both Radius networks. Use it when Safe{Wallet} or the Safe Protocol Kit needs canonical cross-chain Safe contract addresses.
+
+| Network | Chain ID | Factory address | Deployment artifact |
+|---------|----------|-----------------|---------------------|
+| Radius Testnet | `72344` | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | [`artifacts/72344`](https://github.com/safe-fndn/safe-singleton-factory/blob/main/artifacts/72344/deployment.json) |
+| Radius Mainnet | `723487` | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | [`artifacts/723487`](https://github.com/safe-fndn/safe-singleton-factory/blob/main/artifacts/723487/deployment.json) |
+
 ## Deployment checklist
 
 1. **Fund wallet** from the faucet (see Radius "dripping faucet" skill)
