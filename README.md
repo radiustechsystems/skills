@@ -13,6 +13,8 @@ wallet MCP server, or framework-specific execution plugin.
   installed by agent frameworks.
 - **`radius-cli`**: the canonical deterministic wallet, transaction, read,
   signing, and x402 execution surface for local agents and terminal workflows.
+- **`radius-sdk`**: the canonical TypeScript surface for accepting x402 payments
+  with Hono and paying x402 resources from application code.
 - **Hermes, OpenClaw, Codex, and other frameworks**: thin wrappers should load
   these skills for guidance and call `radius-cli` for wallet and execution
   operations instead of reimplementing wallet state.
@@ -245,3 +247,4 @@ The subscriber manifest is validated by GitHub Actions and can also be checked l
 ```bash
 python3 scripts/radius_subscribers.py validate
 ```
+

@@ -1,39 +1,26 @@
 {
-    "name": "x402 Server and Client Integration",
-    "skills": ["x402"],
-    "query": "Add x402 payment gating to my API endpoint that charges 0.0001 SBC per request on Radius mainnet, then write a script that calls it with a signed payment",
-    "context": "User has an existing HTTP API and wants to monetize it with x402 micropayments. They have a funded wallet with SBC on Radius mainnet. The Radius-operated facilitator at facilitator.radiustech.xyz is the target.",
-    "expected_behavior": [
-        "Creates an X402Config object with correct Radius mainnet values (asset, network eip155:723487, facilitator URL, amount '100' for 0.0001 SBC)",
-        "Implements processPayment() that reads PAYMENT-SIGNATURE header, decodes base64, forwards to facilitator /verify and /settle",
-        "Returns 402 with PAYMENT-REQUIRED header when no PAYMENT-SIGNATURE header is present",
-        "Decoded PAYMENT-REQUIRED object includes accepts array with assetTransferMethod: 'permit2' in extra field",
-        "Decoded PAYMENT-REQUIRED object advertises the eip2612GasSponsoring extension",
-        "Payment requirements include exact EIP-2612 domain: name 'Stable Coin', version '1'",
-        "Handles all PaymentOutcome states with correct HTTP status codes (402, 400, 502, 200)",
-        "Client script reads and decodes PAYMENT-REQUIRED header and extracts accepts[0]",
-        "Client reads EIP-2612 nonce from SBC contract via nonces(address)",
-        "Client signs both EIP-2612 permit (spender = Permit2 contract) and Permit2 PermitWitnessTransferFrom (spender = x402 Proxy)",
-        "Payload includes extensions.eip2612GasSponsoring with EIP-2612 signature",
-        "Payload includes payload.permit2Authorization with Permit2 details",
-        "Client base64-encodes the payload and sets PAYMENT-SIGNATURE header",
-        "Uses SBC with 6 decimal precision throughout (never 18)"
-    ],
-    "success_criteria": [
-        "Server returns 402 with PAYMENT-REQUIRED header containing x402Version: 2 and valid accepts array when called without payment",
-        "SBC token address is 0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
-        "Network is eip155:723487 for mainnet",
-        "EIP-2612 permit domain uses name 'Stable Coin' and version '1' (not 'SBC' or other variants)",
-        "EIP-2612 permit spender is the Permit2 contract (0x000000000022D473030F116dDEE9F6B43aC78BA3), not the payTo address",
-        "Permit2 PermitWitnessTransferFrom spender is the x402 Proxy (0x402085c248EeA27D92E8b30b2C58ed07f9E20001)",
-        "Permit2 nonce is randomly generated, not sequential",
-        "Amount field uses 6-decimal raw units (e.g. '100' for 0.0001 SBC, not '100000000000000000000')",
-        "Private key is never logged, displayed, or hardcoded",
-        "Default facilitator URL for mainnet is https://facilitator.radiustech.xyz",
-        "Server-to-facilitator /verify and /settle body uses singular paymentRequirements object",
-        "Server returns PAYMENT-RESPONSE header with settlement metadata after successful settlement",
-        "Server returns PAYMENT-RESPONSE header with failure metadata when settlement fails",
-        "Server correctly forwards payment to facilitator and returns data on successful settlement",
-        "Client handles non-200 responses after payment (re-fetch requirements if 402, retry if 502)"
-    ]
+  "name": "x402 Server and Client Integration with radius-sdk",
+  "skills": ["x402"],
+  "query": "Add x402 payment gating to my Hono API endpoint that charges 0.0001 SBC per request on Radius mainnet, then write a TypeScript client that pays it.",
+  "context": "The user has a funded Radius Mainnet wallet and wants the supported application integration. radius-sdk is the canonical TypeScript surface; mainnet is the SDK default, but the answer must still make the network and recipient explicit.",
+  "expected_behavior": [
+    "Installs radius-sdk with hono for the seller and viem for the TypeScript buyer",
+    "Uses radiusPayments from radius-sdk/hono instead of hand-rolling PAYMENT-REQUIRED or facilitator calls",
+    "Configures a METHOD /path route, an explicit mainnet recipient, and a 0.0001 SBC display-unit price",
+    "Explains that the default settle mode is before and records the transaction hash for delivery failures",
+    "Uses createRadiusFetch from radius-sdk/client for the buyer",
+    "Sets network mainnet and requires maxPerRequest at or above 0.0001 SBC",
+    "Loads signer material from a secret manager or environment and never prints or embeds it",
+    "Reads the PAYMENT-RESPONSE receipt with getPaymentReceipt",
+    "Uses payFetch.getSettlement before retrying an ambiguous paid request"
+  ],
+  "success_criteria": [
+    "Seller code imports radiusPayments from radius-sdk/hono",
+    "Buyer code imports createRadiusFetch from radius-sdk/client",
+    "The price and maxPerRequest are display-unit values and SBC is treated as six-decimal",
+    "Mainnet and Testnet configuration are not mixed",
+    "No custom typed-data, Permit2 signature, or raw facilitator implementation replaces the SDK path",
+    "Receipt or settlement reconciliation is included",
+    "Private keys are not hardcoded, logged, or passed as shell arguments"
+  ]
 }

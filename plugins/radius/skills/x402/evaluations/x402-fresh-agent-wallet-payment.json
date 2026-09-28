@@ -1,24 +1,22 @@
 {
-    "name": "x402 Payment with Fresh Agent Testnet Wallet",
-    "skills": ["radius-dev", "dripping-faucet", "x402"],
-    "query": "Create a fresh Radius testnet wallet, fund it from the faucet, then call this x402 endpoint and pay for the response. Do it as an automated agent demo.",
-    "context": "The user wants a one-shot automated demo using a new testnet wallet. The agent must avoid interactive Foundry keystore prompts and raw private keys in CLI arguments. The x402 endpoint supports Radius testnet and PAYMENT-REQUIRED.",
-    "expected_behavior": [
-        "Creates or selects a fresh testnet wallet with radius-cli using RADIUS_HOME=.radius and RADIUS_NETWORK=testnet",
-        "Uses radius-cli wallet address as the faucet address",
-        "Funds the wallet with the dripping-faucet flow using radius-cli signing if a signature is required and verifies SBC balance on Radius testnet",
-        "Consumes the x402 endpoint with radius-cli wallet x402 <verb> <url>",
-        "Includes --x402-threshold in display units, --json, and -y for the paid request",
-        "Does not use CAST_ACCOUNT, cast wallet sign, manual viem payment signing, or Foundry keystore prompts for the fresh radius-cli wallet"
-    ],
-    "success_criteria": [
-        "Uses Radius testnet chain ID 72344 and RPC https://rpc.testnet.radiustech.xyz",
-        "SBC balance is checked on-chain after faucet funding",
-        "x402 command shape is radius-cli wallet x402 <verb> <url>",
-        "x402 threshold uses display units and is present before -y",
-        "No raw private key is printed, logged, hardcoded, or passed as a CLI argument",
-        "No command uses --private-key",
-        "No command uses cast wallet sign or manual EIP-712 JSON generation",
-        "The final paid request returns or reports the service response"
-    ]
+  "name": "x402 Payment with Fresh Agent Testnet Wallet",
+  "skills": ["radius-dev", "dripping-faucet", "x402"],
+  "query": "Create a fresh Radius Testnet wallet, fund it, then pay this x402 endpoint as an automated agent demo.",
+  "context": "The workflow must avoid interactive Foundry keystores and raw key arguments. radius-cli 0.2.0+ uses radius-sdk for x402 and supports sponsored Permit2 approval.",
+  "expected_behavior": [
+    "Creates or selects the wallet with radius-cli using RADIUS_HOME=.radius and RADIUS_NETWORK=testnet",
+    "Reports only the wallet address and other non-secret values",
+    "Funds and verifies the wallet using the dripping-faucet skill",
+    "Uses radius-cli wallet x402 with an explicit Testnet URL, --x402-threshold, --json, and -y",
+    "Treats the threshold as a display-unit hard cap for one request",
+    "Explains that the Radius facilitator sponsors the one-time Permit2 approval when advertised",
+    "Captures the payment result without exposing keystore material"
+  ],
+  "success_criteria": [
+    "Every wallet, faucet, RPC, and payment step remains on Testnet",
+    "No raw private key appears in output or shell arguments",
+    "The wallet is funded and its balance is verified before payment",
+    "The paid request refuses an offer above the threshold",
+    "The result includes enough receipt or transaction information to reconcile the payment"
+  ]
 }

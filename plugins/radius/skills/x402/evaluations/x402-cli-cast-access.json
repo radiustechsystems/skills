@@ -1,25 +1,21 @@
 {
-    "name": "x402 CLI Access with radius-cli",
-    "skills": ["x402"],
-    "query": "Access this Radius testnet x402-gated endpoint once from the terminal. I have a funded local radius-cli wallet. Do not create a Node project or JavaScript script.",
-    "context": "The user wants a one-off paid request to an existing x402 endpoint. They explicitly want a terminal flow and already have a funded local radius-cli wallet. The endpoint returns x402 v2 PAYMENT-REQUIRED headers and supports Radius testnet.",
-    "expected_behavior": [
-        "Uses radius-cli wallet x402 rather than the legacy curl/cast reference or viem app-client flow",
-        "Uses RADIUS_HOME scoped to the current project or agent and RADIUS_NETWORK=testnet",
-        "Runs radius-cli wallet x402 <verb> <url> with an explicit --x402-threshold display-unit limit",
-        "Uses --json for machine-readable output when the user asks an agent to execute it",
-        "Uses -y only after the URL, network, and threshold are explicit",
-        "For non-GET requests, passes headers with -H and body data with -d",
-        "Does not create a package.json, Node project, JavaScript script, manual typed-data files, or cast signing flow"
-    ],
-    "success_criteria": [
-        "Command shape is radius-cli wallet x402 <verb> <url>",
-        "Command includes --x402-threshold and explains the amount is display units, not raw 6-decimal units",
-        "Command includes --json for agent-readable output",
-        "Command includes -y for non-interactive execution only with an explicit threshold",
-        "No raw private key is requested, logged, or passed as a CLI argument",
-        "No command uses cast wallet sign, CAST_ACCOUNT, or manual EIP-712 JSON generation",
-        "Network uses Radius testnet through RADIUS_NETWORK=testnet or equivalent radius-cli configuration",
-        "The flow can be run from an arbitrary project directory"
-    ]
+  "name": "x402 CLI Access with radius-cli 0.2.0",
+  "skills": ["x402"],
+  "query": "Access this Radius Testnet x402 endpoint once from the terminal. I have a funded local radius-cli wallet. Do not create a Node project.",
+  "context": "The endpoint speaks x402 and the user wants a one-off unattended terminal flow.",
+  "expected_behavior": [
+    "Checks for radius-cli version 0.2.0 or later",
+    "Uses radius-cli wallet x402 instead of the low-level curl/cast fallback",
+    "Sets RADIUS_HOME to a project-scoped directory and RADIUS_NETWORK=testnet",
+    "Sets --x402-threshold in SBC display units",
+    "Uses --json and -y only after the URL and threshold are explicit",
+    "Explains that -y does not override the threshold and an above-cap offer is refused with exit code 2",
+    "Does not pass a raw private key as a command-line argument"
+  ],
+  "success_criteria": [
+    "Command shape is radius-cli wallet x402 <verb> <url>",
+    "The threshold is described as a per-request hard cap rather than a total budget",
+    "The answer does not claim the user needs native RUSD when the Radius facilitator sponsors Permit2 approval",
+    "The legacy curl/cast reference is not used for the ordinary CLI request"
+  ]
 }

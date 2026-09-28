@@ -33,8 +33,9 @@ Use Radius when your application involves:
 
 - **TypeScript**: viem with `defineChain`
 - **Smart contracts**: Foundry
-- **Payments**: x402 protocol with Radius facilitator
-- **Do NOT use** `@radiustechsystems/sdk` — deprecated. Use plain viem.
+- **Payments in TypeScript apps**: `radius-sdk/hono` for sellers and `radius-sdk/client` for buyers
+- **Payments from agent shells**: `radius-cli wallet x402` with an explicit threshold
+- **Do NOT use** `@radiustechsystems/sdk` — deprecated and unrelated to `radius-sdk`. Use plain viem for ordinary chain interactions.
 
 ## Gas price
 
@@ -59,4 +60,8 @@ SBC stablecoin uses 6 decimals — use `parseUnits(amount, 6)`, not `parseEther`
 - Why Radius: `https://docs.radiustech.xyz/llms/why-radius.md`
 - Radius vs. blockchain: `https://docs.radiustech.xyz/llms/radius-vs-blockchain.md`
 - Network config: `https://docs.radiustech.xyz/developer-resources/network-configuration.md`
-- x402 integration: `https://docs.radiustech.xyz/llms/x402-integration-guide.md`
+- radius-sdk: `https://docs.radiustech.xyz/developer-resources/radius-sdk.md`
+- Accept payments: `https://docs.radiustech.xyz/accept-payments.md`
+- Make payments: `https://docs.radiustech.xyz/make-payments.md`
+- x402 integration: `https://docs.radiustech.xyz/developer-resources/x402-integration.md`
+

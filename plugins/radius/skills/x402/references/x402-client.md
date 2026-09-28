@@ -1,748 +1,139 @@
-# x402 Client-Side Implementation
+# Pay x402 Resources with `radius-sdk`
 
-This reference provides everything needed to consume x402-protected APIs — sign payment permits and send them with your requests.
+Use `radius-sdk/client` for TypeScript applications and `radius-cli wallet x402`
+for one-off agent or terminal requests. These surfaces parse the challenge,
+select a compatible offer, sign, pay, and retry the request.
 
-**Only dependency:** `viem`
+## TypeScript client
 
----
-
-## Why two signatures?
-
-x402 on Radius uses a **dual-signature** Permit2 flow. The client never sends a transaction — it signs two EIP-712 typed data messages:
-
-1. **EIP-2612 permit** — tells the SBC token contract: "I approve the Permit2 contract to spend X amount of my SBC." The spender is the **Permit2 contract** (`0x0000...8BA3`).
-
-2. **Permit2 PermitWitnessTransferFrom** — tells the Permit2 contract: "I authorize the x402 Proxy to transfer X SBC from me to the payment recipient." The spender is the **x402 Proxy** (`0x4020...0001`).
-
-The facilitator receives both signatures and executes them on-chain in a single settlement transaction.
-
----
-
-## EIP-712 typed data structures
-
-### EIP-2612 Permit (signature 1)
-
-```typescript
-const permitDomain = {
-  name: 'Stable Coin',
-  version: '1',
-  chainId: 723487,                // or 72344 for testnet
-  verifyingContract: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb', // SBC token
-};
-
-const permitTypes = {
-  Permit: [
-    { name: 'owner', type: 'address' },
-    { name: 'spender', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
-  ],
-};
-
-// Message values:
-// owner     = your wallet address
-// spender   = Permit2 contract: 0x000000000022D473030F116dDEE9F6B43aC78BA3
-// value     = the payment amount (must equal accepts[i].amount; the Radius proxy reverts Permit2612AmountMismatch() otherwise)
-// nonce     = read from SBC contract: nonces(ownerAddress) — sequential, starts at 0
-// deadline  = Unix timestamp (e.g. now + 300 seconds)
+```bash
+pnpm add radius-sdk viem
 ```
 
-### Permit2 PermitWitnessTransferFrom (signature 2)
-
 ```typescript
-const permit2Domain = {
-  name: 'Permit2',
-  chainId: 723487,                // or 72344 for testnet
-  verifyingContract: '0x000000000022D473030F116dDEE9F6B43aC78BA3', // Permit2 contract
-};
+import { createRadiusFetch } from 'radius-sdk/client';
 
-const permit2Types = {
-  PermitWitnessTransferFrom: [
-    { name: 'permitted', type: 'TokenPermissions' },
-    { name: 'spender', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
-    { name: 'witness', type: 'Witness' },
-  ],
-  TokenPermissions: [
-    { name: 'token', type: 'address' },
-    { name: 'amount', type: 'uint256' },
-  ],
-  Witness: [
-    { name: 'to', type: 'address' },
-    { name: 'validAfter', type: 'uint256' },
-  ],
-};
-
-// Message values:
-// permitted.token  = SBC address: 0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb
-// permitted.amount = payment amount (same as EIP-2612 value)
-// spender          = x402 Proxy: 0x402085c248EeA27D92E8b30b2C58ed07f9E20001
-// nonce            = random (crypto random bytes, NOT sequential)
-// deadline         = Unix timestamp (same as EIP-2612 deadline)
-// witness.to       = payTo address (the merchant receiving payment)
-// witness.validAfter = 0 (no earliest-valid constraint)
-```
-
----
-
-## Shared helpers
-
-These utilities are used by both `parsePaymentRequired` and `signX402Payment` below. Copy them once at the top of your client.
-
-```typescript
-function randomPermit2Nonce(): bigint {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return BigInt('0x' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(''));
-}
-
-function encodeBase64Json(data: unknown): string {
-  const json = JSON.stringify(data);
-  if (typeof btoa === 'function') return btoa(json);
-  return Buffer.from(json, 'utf8').toString('base64');
-}
-
-function decodeBase64Json<T = any>(encoded: string): T {
-  const json = typeof atob === 'function'
-    ? atob(encoded)
-    : Buffer.from(encoded, 'base64').toString('utf8');
-  return JSON.parse(json);
-}
-```
-
----
-
-## parsePaymentRequired function
-
-Every client flow starts by parsing the 402 response — this is the canonical decoder. The `PAYMENT-REQUIRED` response header carries a base64-encoded JSON payload describing what the server wants paid.
-
-```typescript
-async function parsePaymentRequired(response: Response) {
-  if (response.status !== 402) return null;
-
-  const header = response.headers.get('PAYMENT-REQUIRED');
-  if (!header) throw new Error('Missing PAYMENT-REQUIRED header');
-
-  const body = decodeBase64Json(header);
-
-  // Validate x402 v2 format
-  if (body.x402Version !== 2 || !body.accepts?.length) {
-    throw new Error('Unexpected 402 response format');
-  }
-
-  return body;
-}
-```
-
-When the server offers multiple `accepts` entries (e.g. several networks or assets), select the one that matches your wallet's chain rather than blindly using `accepts[0]`:
-
-```typescript
-const accepted = paymentRequired.accepts.find((a) => a.network === `eip155:${chainId}`);
-if (!accepted) throw new Error(`No accepts entry for eip155:${chainId}`);
-```
-
----
-
-## signX402Payment function
-
-```typescript
-import { type Hex } from 'viem';
-
-const RADIUS_DEFAULTS = {
-  chainId: 723487,
-  tokenAddress: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb' as `0x${string}`,
-  tokenName: 'Stable Coin',
-  tokenVersion: '1',
-  permit2Address: '0x000000000022D473030F116dDEE9F6B43aC78BA3' as `0x${string}`,
-  x402Permit2Proxy: '0x402085c248EeA27D92E8b30b2C58ed07f9E20001' as `0x${string}`,
-};
-
-interface SignX402Params {
-  /** EIP-712 signTypedData function (from viem account or browser wallet) */
-  signTypedData: (params: any) => Promise<Hex>;
-  /** Payer wallet address */
-  owner: `0x${string}`;
-  /** EIP-2612 nonce — read from SBC contract: nonces(ownerAddress) */
-  permitNonce: bigint;
-  /** The resource being paid for */
-  resource: { url: string; description?: string; mimeType?: string };
-  /** Payment requirement selected from the decoded PAYMENT-REQUIRED header's accepts array */
-  accepted: {
-    scheme: string;
-    network: string;
-    amount: string;
-    asset: string;
-    payTo: string;
-    maxTimeoutSeconds: number;
-    extra: { name: string; version: string; assetTransferMethod: string };
-  };
-  /** Optional overrides for chain defaults */
-  config?: Partial<typeof RADIUS_DEFAULTS>;
-}
-
-export async function signX402Payment({
-  signTypedData,
-  owner,
-  permitNonce,
-  resource,
-  accepted,
-  config,
-}: SignX402Params): Promise<{ payload: any; paymentSignature: string }> {
-  const cfg = { ...RADIUS_DEFAULTS, ...config };
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-  const amount = accepted.amount;
-  const approvalAmount = amount; // Radius proxy requires EIP-2612 value == Permit2 transfer amount
-
-  // 1. Sign EIP-2612 permit (approve Permit2 contract to spend SBC)
-  const eip2612Signature = await signTypedData({
-    domain: {
-      name: cfg.tokenName,
-      version: cfg.tokenVersion,
-      chainId: cfg.chainId,
-      verifyingContract: cfg.tokenAddress,
-    },
-    types: {
-      Permit: [
-        { name: 'owner', type: 'address' },
-        { name: 'spender', type: 'address' },
-        { name: 'value', type: 'uint256' },
-        { name: 'nonce', type: 'uint256' },
-        { name: 'deadline', type: 'uint256' },
-      ],
-    },
-    primaryType: 'Permit' as const,
-    message: {
-      owner,
-      spender: cfg.permit2Address,
-      value: BigInt(approvalAmount),
-      nonce: permitNonce,
-      deadline,
-    },
-  });
-
-  // 2. Sign Permit2 PermitWitnessTransferFrom (authorize token transfer via x402 Proxy)
-  const p2Nonce = randomPermit2Nonce();
-  const permit2Signature = await signTypedData({
-    domain: {
-      name: 'Permit2',
-      chainId: cfg.chainId,
-      verifyingContract: cfg.permit2Address,
-    },
-    types: {
-      PermitWitnessTransferFrom: [
-        { name: 'permitted', type: 'TokenPermissions' },
-        { name: 'spender', type: 'address' },
-        { name: 'nonce', type: 'uint256' },
-        { name: 'deadline', type: 'uint256' },
-        { name: 'witness', type: 'Witness' },
-      ],
-      TokenPermissions: [
-        { name: 'token', type: 'address' },
-        { name: 'amount', type: 'uint256' },
-      ],
-      Witness: [
-        { name: 'to', type: 'address' },
-        { name: 'validAfter', type: 'uint256' },
-      ],
-    },
-    primaryType: 'PermitWitnessTransferFrom' as const,
-    message: {
-      permitted: { token: cfg.tokenAddress, amount: BigInt(amount) },
-      spender: cfg.x402Permit2Proxy,
-      nonce: p2Nonce,
-      deadline,
-      witness: { to: accepted.payTo as `0x${string}`, validAfter: 0n },
-    },
-  });
-
-  // 3. Build the full payload
-  const payload = {
-    x402Version: 2,
-    scheme: 'exact',
-    network: `eip155:${cfg.chainId}`,
-    resource: {
-      url: resource.url,
-      description: resource.description ?? '',
-      mimeType: resource.mimeType ?? 'application/json',
-    },
-    accepted,
-    payload: {
-      signature: permit2Signature,
-      permit2Authorization: {
-        permitted: { token: cfg.tokenAddress, amount: amount.toString() },
-        from: owner,
-        spender: cfg.x402Permit2Proxy,
-        nonce: p2Nonce.toString(),
-        deadline: deadline.toString(),
-        witness: { to: accepted.payTo, validAfter: '0' },
-      },
-    },
-    extensions: {
-      eip2612GasSponsoring: {
-        info: {
-          from: owner,
-          asset: cfg.tokenAddress,
-          spender: cfg.permit2Address,
-          amount: approvalAmount,
-          nonce: permitNonce.toString(),
-          deadline: deadline.toString(),
-          signature: eip2612Signature,
-          version: '1',
-        },
-      },
-    },
-  };
-
-  return { payload, paymentSignature: encodeBase64Json(payload) };
-}
-```
-
----
-
-## Reading the EIP-2612 nonce
-
-The EIP-2612 permit nonce is **sequential** — read it from the SBC token contract before signing.
-
-```typescript
-import { createPublicClient, http, parseAbi, defineChain } from 'viem';
-
-// See radius-dev skill for full chain definition
-const radiusMainnet = defineChain({
-  id: 723487,
-  name: 'Radius Network',
-  nativeCurrency: { decimals: 18, name: 'RUSD', symbol: 'RUSD' },
-  rpcUrls: { default: { http: ['https://rpc.radiustech.xyz'] } },
+const payFetch = createRadiusFetch({
+  network: 'testnet',
+  signer: process.env.RADIUS_PRIVATE_KEY as `0x${string}`,
+  maxPerRequest: '0.01 SBC',
 });
 
-const SBC_ADDRESS = '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb' as const;
+const response = await payFetch('https://seller.example/api/lookup');
+console.log(response.status, await response.text());
+```
 
-const publicClient = createPublicClient({
-  chain: radiusMainnet,
-  transport: http(),
+The returned function accepts normal `fetch` arguments. Non-402 responses are
+returned unchanged. A signer may be a secret-manager-provided private key, a
+viem account, or a viem `WalletClient`. Never log or commit key material.
+
+## Payment policy
+
+`maxPerRequest` is mandatory. It caps one payment and is not a cumulative
+budget. The client also pays only the configured network and asset and takes
+the first compatible offer within the cap, in server order.
+
+Use `onPaymentRequired` for a recipient allowlist or total budget:
+
+```typescript
+const budget = 1_000_000n; // 1 SBC in six-decimal base units
+let committed = 0n;
+
+const payFetch = createRadiusFetch({
+  network: 'testnet',
+  signer: process.env.RADIUS_PRIVATE_KEY as `0x${string}`,
+  maxPerRequest: '0.01 SBC',
+  onPaymentRequired: (offer) => {
+    if (offer.payTo.toLowerCase() !== '0xselleraddress'.toLowerCase()) return false;
+    if (committed + BigInt(offer.amount) > budget) return false;
+    committed += BigInt(offer.amount);
+    return true;
+  },
 });
+```
 
-async function getPermitNonce(owner: `0x${string}`): Promise<bigint> {
-  return publicClient.readContract({
-    address: SBC_ADDRESS,
-    abi: parseAbi(['function nonces(address owner) view returns (uint256)']),
-    functionName: 'nonces',
-    args: [owner],
-  });
+An offer includes `amount`, `amountFormatted`, `payTo`, `asset`, `network`,
+`resource`, `scheme`, `x402Version`, `transferMethod`, `gasSponsored`, and the
+raw requirements.
+
+## Receipts and reconciliation
+
+```typescript
+import { getPaymentReceipt } from 'radius-sdk/client';
+
+const response = await payFetch('https://seller.example/api/lookup');
+const receipt = getPaymentReceipt(response, payFetch.network);
+if (receipt) console.log(receipt.transaction, receipt.amount, receipt.explorerUrl);
+```
+
+For a timeout or ambiguous delivery, use `payFetch.getSettlement(txHash)` before
+paying again. It returns `undefined` while the node does not know the transaction
+and otherwise reports status, transfers, recipient totals, and explorer URL.
+
+## Errors
+
+```typescript
+import { RadiusPaymentError } from 'radius-sdk/client';
+
+try {
+  await payFetch('https://seller.example/api/lookup');
+} catch (error) {
+  if (!(error instanceof RadiusPaymentError)) throw error;
+  console.error(error.code, error.message);
 }
 ```
 
----
+Handle at least these codes: `price_above_limit`, `declined`,
+`network_mismatch`, `asset_mismatch`, `no_compatible_offer`,
+`unsupported_transfer_method`, `invalid_challenge`, `payment_rejected`,
+`invalid_receipt`, `redirect_refused`, `approval_required`, and
+`approval_failed`.
 
-## One-off CLI access
+The paid retry never follows a redirect to another origin. For
+`payment_rejected`, `error.details.response` contains the server response.
 
-For an agent or terminal session, prefer `radius-cli wallet x402` from a
-project-scoped wallet home:
+## Permit2 approval
+
+The Radius facilitator sponsors the one-time Permit2 approval through an
+EIP-2612 signature, so a payer holding only SBC can pay without sending an
+approval transaction. For a facilitator without sponsorship,
+`permit2Approval: 'auto'` sends one unlimited Permit2 approval before the first
+payment. Use `permit2Approval: 'never'` or `onApprovalRequired` when the caller
+must explicitly control that transaction.
+
+## Agent and terminal client
+
+Use `radius-cli` 0.2.0 or later:
+
+```bash
+radius-cli --version
+
+RADIUS_HOME=.radius RADIUS_NETWORK=testnet \
+  radius-cli wallet x402 get https://seller.example/api/lookup \
+  --x402-threshold 0.01 \
+  --json \
+  -y
+```
+
+`--x402-threshold` is a display-unit hard cap for one request. When combined
+with `-y`, an offer above the cap is refused with exit code 2. `-y` without a
+threshold authorizes any amount and is unsuitable for unattended agents.
+
+POST example:
 
 ```bash
 RADIUS_HOME=.radius RADIUS_NETWORK=testnet \
-  radius-cli wallet x402 get https://example.com/paid \
-  --x402-threshold 0.001 \
-  --json \
-  -y
-```
-
-`--x402-threshold` is in display units such as SBC, not raw 6-decimal integer
-units. Use it as the non-interactive safety limit for agent runs. `radius-cli`
-also supports headers and request bodies for non-GET endpoints:
-
-```bash
-radius-cli wallet x402 post https://example.com/paid \
-  --x402-threshold 0.01 \
+  radius-cli wallet x402 post https://seller.example/api/query \
   -H "Content-Type: application/json" \
   -d '{"query":"radius"}' \
+  --x402-threshold 0.01 \
   --json \
   -y
 ```
 
-The helpers in this reference are for embedding x402 signing into app code or
-browser-wallet flows. The `scripts/x402-pay.mjs` helper and
-[x402-cli-cast.md](x402-cli-cast.md) are legacy/specialized paths for
-environments that cannot use `radius-cli`.
-
----
-
-## Example: Node.js script consuming a paid API
-
-> Include the [Shared helpers](#shared-helpers) (`randomPermit2Nonce`, `encodeBase64Json`, `decodeBase64Json`), `parsePaymentRequired`, `signX402Payment`, and `RADIUS_DEFAULTS` from the sections above.
-
-```typescript
-import { createPublicClient, http, parseAbi } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { defineChain } from 'viem';
-
-// Chain definition (see radius-dev skill).
-// For testnet: id 72344, RPC https://rpc.testnet.radiustech.xyz, explorer https://testnet.radiustech.xyz
-const radiusMainnet = defineChain({
-  id: 723487,
-  name: 'Radius Network',
-  nativeCurrency: { decimals: 18, name: 'RUSD', symbol: 'RUSD' },
-  rpcUrls: { default: { http: ['https://rpc.radiustech.xyz'] } },
-  blockExplorers: {
-    default: { name: 'Radius Explorer', url: 'https://network.radiustech.xyz' },
-  },
-});
-
-const SBC_ADDRESS = '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb' as const;
-
-const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
-const publicClient = createPublicClient({ chain: radiusMainnet, transport: http() });
-
-async function callPaidApi(apiUrl: string) {
-  // 1. Request without payment — get 402 + requirements
-  const initialRes = await fetch(apiUrl);
-  if (initialRes.status !== 402) {
-    console.log('No payment required:', await initialRes.json());
-    return;
-  }
-
-  const paymentRequired = await parsePaymentRequired(initialRes);
-  if (!paymentRequired) throw new Error('Expected PAYMENT-REQUIRED response');
-
-  // Pick the accepts[i] whose network matches our wallet's chain — never blindly accepts[0].
-  const chainId = publicClient.chain.id;
-  const accepted = paymentRequired.accepts.find((a) => a.network === `eip155:${chainId}`);
-  if (!accepted) {
-    throw new Error(
-      `No accepts entry for eip155:${chainId} (offered: ${paymentRequired.accepts.map((a) => a.network).join(', ')})`,
-    );
-  }
-
-  // 2. Read EIP-2612 nonce
-  const permitNonce = await publicClient.readContract({
-    address: SBC_ADDRESS,
-    abi: parseAbi(['function nonces(address) view returns (uint256)']),
-    functionName: 'nonces',
-    args: [account.address],
-  });
-
-  // 3. Sign payment — pass `config: { chainId }` so testnet/mainnet are not hardcoded.
-  const { paymentSignature } = await signX402Payment({
-    signTypedData: (params) => account.signTypedData(params),
-    owner: account.address,
-    permitNonce,
-    resource: { url: apiUrl, description: `Access to ${new URL(apiUrl).pathname}` },
-    accepted,
-    config: { chainId },
-  });
-
-  // 4. Retry with payment
-  const paidRes = await fetch(apiUrl, {
-    headers: { 'PAYMENT-SIGNATURE': paymentSignature },
-  });
-
-  console.log('Status:', paidRes.status);
-  console.log('Data:', await paidRes.json());
-}
-
-callPaidApi('https://your-x402-api.example.com/api/data');
-```
-
----
-
-## Example: Browser wallet (wagmi/viem)
-
-> Include the [Shared helpers](#shared-helpers) (`randomPermit2Nonce`, `encodeBase64Json`, `decodeBase64Json`), `parsePaymentRequired`, `signX402Payment`, and `RADIUS_DEFAULTS` from the sections above.
-
-```typescript
-import { useAccount, useWalletClient } from 'wagmi';
-import { createPublicClient, http, parseAbi } from 'viem';
-
-const SBC_ADDRESS = '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb' as const;
-
-export function usePaidFetch() {
-  const { address } = useAccount();
-  const { data: walletClient } = useWalletClient();
-
-  async function fetchWithPayment(apiUrl: string) {
-    if (!address || !walletClient) throw new Error('Wallet not connected');
-
-    // 1. Get 402 requirements
-    const initialRes = await fetch(apiUrl);
-    if (initialRes.status !== 402) return initialRes.json();
-    const paymentRequired = await parsePaymentRequired(initialRes);
-    if (!paymentRequired) throw new Error('Expected PAYMENT-REQUIRED response');
-
-    // Pick the accepts[i] whose network matches the connected wallet's chain.
-    const chainId = walletClient.chain.id;
-    const accepted = paymentRequired.accepts.find((a) => a.network === `eip155:${chainId}`);
-    if (!accepted) {
-      throw new Error(
-        `No accepts entry for eip155:${chainId} (offered: ${paymentRequired.accepts.map((a) => a.network).join(', ')})`,
-      );
-    }
-
-    // 2. Read EIP-2612 nonce
-    const publicClient = createPublicClient({
-      chain: walletClient.chain,
-      transport: http(),
-    });
-    const permitNonce = await publicClient.readContract({
-      address: SBC_ADDRESS as `0x${string}`,
-      abi: parseAbi(['function nonces(address) view returns (uint256)']),
-      functionName: 'nonces',
-      args: [address],
-    });
-
-    // 3. Sign payment (browser wallet popup for each signature)
-    const { paymentSignature } = await signX402Payment({
-      signTypedData: (params: any) => walletClient.signTypedData(params),
-      owner: address,
-      permitNonce,
-      resource: { url: apiUrl },
-      accepted,
-      config: { chainId },
-    });
-
-    // 4. Retry with payment
-    const paidRes = await fetch(apiUrl, {
-      headers: { 'PAYMENT-SIGNATURE': paymentSignature },
-    });
-    return paidRes.json();
-  }
-
-  return { fetchWithPayment };
-}
-```
-
----
-
-## Error handling
-
-### Handling payment failures
-
-After sending the `PAYMENT-SIGNATURE` header, the server may still return non-200:
-
-| Status | Meaning | Action |
-|--------|---------|--------|
-| 200 | Payment accepted | Parse response body as normal |
-| 400 | Malformed PAYMENT-SIGNATURE header | Check base64 encoding, JSON structure |
-| 402 | Payment verification failed | Requirements may have changed — re-fetch 402 and re-sign |
-| 502 | Facilitator unavailable | Retry after a short delay |
-
-```typescript
-// Uses signX402Payment, getPermitNonce, and account from sections above.
-async function fetchWithRetry(apiUrl: string, chainId: number, maxRetries = 2) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(apiUrl);
-    if (res.status !== 402) return res;
-
-    const paymentRequired = await parsePaymentRequired(res);
-    if (!paymentRequired) throw new Error('Expected PAYMENT-REQUIRED response');
-    const accepted = paymentRequired.accepts.find((a) => a.network === `eip155:${chainId}`);
-    if (!accepted) throw new Error(`No accepts entry for eip155:${chainId}`);
-    const permitNonce = await getPermitNonce(account.address);
-
-    const { paymentSignature } = await signX402Payment({
-      signTypedData: (params) => account.signTypedData(params),
-      owner: account.address,
-      permitNonce,
-      resource: { url: apiUrl },
-      accepted,
-      config: { chainId },
-    });
-
-    const paidRes = await fetch(apiUrl, { headers: { 'PAYMENT-SIGNATURE': paymentSignature } });
-    if (paidRes.ok) return paidRes;
-
-    // If still 402, requirements may have changed — loop and re-sign
-    if (paidRes.status === 402 && attempt < maxRetries) continue;
-    return paidRes;
-  }
-}
-```
-
----
-
-## Third-party facilitators: pre-approving Permit2
-
-Radius-operated facilitators support EIP-2612 gas sponsoring for first-time wallets. Some third-party facilitators do **not** process EIP-2612 gas sponsoring during settlement. Fresh wallets may need to pre-approve the Permit2 contract before their first x402 payment when using those facilitators.
-
-Use EIP-2612 `permit()` on the SBC contract to grant Permit2 an allowance:
-
-```typescript
-import { createPublicClient, createWalletClient, http, parseAbi, maxUint256, defineChain } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-
-const radiusTestnet = defineChain({
-  id: 72344,
-  name: 'Radius Testnet',
-  nativeCurrency: { decimals: 18, name: 'RUSD', symbol: 'RUSD' },
-  rpcUrls: { default: { http: ['https://rpc.testnet.radiustech.xyz'] } },
-});
-
-const SBC_ADDRESS = '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb' as const;
-const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as const;
-
-const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
-const publicClient = createPublicClient({ chain: radiusTestnet, transport: http() });
-const walletClient = createWalletClient({ chain: radiusTestnet, transport: http(), account });
-
-async function approvePermit2ForTestnet() {
-  // Read current nonce
-  const nonce = await publicClient.readContract({
-    address: SBC_ADDRESS,
-    abi: parseAbi(['function nonces(address) view returns (uint256)']),
-    functionName: 'nonces',
-    args: [account.address],
-  });
-
-  // Sign EIP-2612 permit granting Permit2 a large allowance
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour
-  const value = maxUint256; // max allowance
-
-  const signature = await account.signTypedData({
-    domain: {
-      name: 'Stable Coin',
-      version: '1',
-      chainId: 72344,
-      verifyingContract: SBC_ADDRESS,
-    },
-    types: {
-      Permit: [
-        { name: 'owner', type: 'address' },
-        { name: 'spender', type: 'address' },
-        { name: 'value', type: 'uint256' },
-        { name: 'nonce', type: 'uint256' },
-        { name: 'deadline', type: 'uint256' },
-      ],
-    },
-    primaryType: 'Permit',
-    message: {
-      owner: account.address,
-      spender: PERMIT2_ADDRESS,
-      value,
-      nonce,
-      deadline,
-    },
-  });
-
-  // Split signature for on-chain permit call
-  const r = `0x${signature.slice(2, 66)}` as `0x${string}`;
-  const s = `0x${signature.slice(66, 130)}` as `0x${string}`;
-  let v = parseInt(signature.slice(130, 132), 16);
-  if (v < 27) v += 27;
-
-  // Submit permit transaction
-  const hash = await walletClient.writeContract({
-    address: SBC_ADDRESS,
-    abi: parseAbi([
-      'function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)',
-    ]),
-    functionName: 'permit',
-    args: [account.address, PERMIT2_ADDRESS, value, deadline, v, r, s],
-  });
-
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  console.log('Permit2 approved:', receipt.status, 'tx:', hash);
-}
-
-approvePermit2ForTestnet();
-```
-
-> **This is only needed when the facilitator does not process EIP-2612 gas sponsoring.**
-> Radius-operated facilitators handle gas sponsoring automatically — no pre-approval required.
-
----
-
-## Discovering x402 services
-
-x402 facilitators and registries that implement the `/discovery/resources` convention serve a machine-readable catalog of available services. This is the primary way agents discover paywalled APIs programmatically.
-
-### Known discovery endpoints
-
-| Provider | URL | Scope |
-|----------|-----|-------|
-| Coinbase CDP | `https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources` | Cross-chain (Base, Solana, more) |
-| PayAI | `https://facilitator.payai.network/discovery/resources` | Cross-chain |
-
-### Response format
-
-Each endpoint returns a JSON object with an `items` array. Each item describes one paywalled service:
-
-```typescript
-interface DiscoveryResponse {
-  items: {
-    /** The paywalled endpoint URL */
-    resource: string;
-    /** Resource type (typically "http") */
-    type: string;
-    /** When the listing was last updated */
-    lastUpdated: string;
-    /** Payment options the service accepts */
-    accepts: {
-      /** Token contract address */
-      asset: string;
-      /** CAIP-2 network identifier (e.g. "eip155:723487" for Radius mainnet) */
-      network: string;
-      /** Price in raw token units */
-      maxAmountRequired: string;
-      /** Payment scheme (typically "exact") */
-      scheme: string;
-      /** Wallet receiving payment */
-      payTo: string;
-      /** Human-readable description of the service */
-      description: string;
-      /** Response content type */
-      mimeType: string;
-      /** Token metadata */
-      extra: { name: string; version: string };
-      /** Input/output schema for the endpoint (optional) */
-      outputSchema?: object;
-    }[];
-  }[];
-}
-```
-
-### Querying for Radius services
-
-Filter discovery results by Radius network identifiers to find services on Radius:
-
-```typescript
-const RADIUS_NETWORKS = ['eip155:723487', 'eip155:72344'];
-
-const DISCOVERY_ENDPOINTS = [
-  'https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources',
-  'https://facilitator.payai.network/discovery/resources',
-];
-
-async function discoverRadiusServices() {
-  const services = [];
-
-  for (const endpoint of DISCOVERY_ENDPOINTS) {
-    try {
-      const res = await fetch(endpoint);
-      if (!res.ok) continue;
-      const data = await res.json();
-
-      for (const item of data.items ?? []) {
-        const radiusAccepts = item.accepts?.filter(
-          (a: any) => RADIUS_NETWORKS.includes(a.network),
-        );
-        if (radiusAccepts?.length) {
-          services.push({
-            url: item.resource,
-            description: radiusAccepts[0].description,
-            price: radiusAccepts[0].maxAmountRequired,
-            network: radiusAccepts[0].network,
-          });
-        }
-      }
-    } catch {
-      // Discovery endpoint unavailable — skip
-    }
-  }
-
-  return services;
-}
-```
-
-> **Discovery is additive.** As more facilitators and registries implement `/discovery/resources`,
-> add their URLs to the `DISCOVERY_ENDPOINTS` array. The response format is standardized across
-> providers.
+Supported verbs are `get`, `post`, `put`, `patch`, `delete`, `head`, and
+`options`. `-d` accepts a literal, `@path`, or stdin via `-`.
+
+The low-level typed-data templates, [curl/cast fallback](x402-cli-cast.md), and
+`scripts/x402-pay.mjs` are for custom or legacy environments. Do not use them as
+the default application or agent workflow.

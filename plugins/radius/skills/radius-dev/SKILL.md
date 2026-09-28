@@ -1,6 +1,6 @@
 ---
 name: radius-dev
-description: End-to-end Radius Network development playbook. Stablecoin-native EVM with sub-second finality. Uses plain viem (defineChain, createPublicClient, createWalletClient) for all TypeScript integration. wagmi for React wallet integration. Foundry for smart contract development and testing. Also covers Hardhat/ethers.js compatibility and EIP-7966 synchronous transactions. Micropayment patterns (pay-per-visit content, real-time API metering, streaming payments), x402 protocol integration, Radius x402 facilitators (Permit2 + EIP-2612), stablecoin-native fees via Turnstile, ERC-20 operations, event watching, production gotchas, and EVM compatibility differences from Ethereum.
+description: End-to-end Radius Network development playbook. Stablecoin-native EVM with sub-second finality. Uses plain viem (defineChain, createPublicClient, createWalletClient) for ordinary chain integration and radius-sdk for x402 application payments. wagmi for React wallet integration. Foundry for smart contract development and testing. Also covers Hardhat/ethers.js compatibility and EIP-7966 synchronous transactions. Micropayment patterns (pay-per-visit content, real-time API metering, streaming payments), x402 protocol integration, Radius x402 facilitators (Permit2 + EIP-2612), stablecoin-native fees via Turnstile, ERC-20 operations, event watching, production gotchas, and EVM compatibility differences from Ethereum.
 published: true
 user-invocable: true
 ---
@@ -28,7 +28,9 @@ Use this Skill when the user asks for:
 - Use `defineChain` from viem to create the Radius chain definition.
 - Use `createPublicClient` for reads, `createWalletClient` for writes.
 - Use viem's native `watchContractEvent`, `getLogs`, and `watchBlockNumber` for event monitoring.
-- Do NOT use `@radiustechsystems/sdk` — it is deprecated. Use plain viem for everything.
+- Do NOT use `@radiustechsystems/sdk` — it is deprecated and unrelated to
+  `radius-sdk`. Use plain viem for ordinary chain interactions and `radius-sdk`
+  only for x402 application payments.
 - ethers.js v6 also works with no overrides. This skill defaults to viem for examples.
 
 2) **UI: wagmi + @tanstack/react-query for React apps**
@@ -100,10 +102,10 @@ wallet handling.
   ```
   `--x402-threshold` is a display-unit limit such as SBC, not a raw 6-decimal
   integer. Do not omit it in automated agent flows.
-- **App code and embedded integrations:** use viem directly
-  (`createPublicClient`, `createWalletClient`, `privateKeyToAccount`) and load
-  keys from environment variables or a secrets manager. Never inline or log
-  private keys.
+- **App code and embedded integrations:** use viem directly for ordinary chain
+  interactions. For x402 application payments, use `radius-sdk/client` and
+  provide a viem account, `WalletClient`, or secret-manager-backed key as the
+  signer. Never inline or log private keys.
 - **Smart contract development and advanced EVM workflows:** use Foundry
   (`forge`/`cast`) for contract builds, tests, deployment scripts, low-level
   contract reads, and debugging. Foundry is no longer the default agent wallet
@@ -208,7 +210,7 @@ Standard ERC-20 interactions, storage operations, and events work unchanged.
 - Smart contracts: Foundry (`forge` / `cast`) + OpenZeppelin
 - Agent wallet and terminal execution: `radius-cli`
 - Micropayments: viem + server-side verification + wallet integration
-- x402: Middleware pattern with Radius facilitator for settlement (Permit2 or EIP-2612) — see the **x402** skill for full implementation details
+- x402: `radius-sdk/hono` for sellers and `radius-sdk/client` for TypeScript buyers; use `radius-cli wallet x402` for agent shells — see the **x402** skill
 
 ### 3. Implement with Radius-specific correctness
 Always be explicit about:
@@ -258,6 +260,9 @@ When you implement changes, provide:
 - Tooling configuration (Foundry, viem, wagmi, Hardhat, ethers.js): fetch `https://docs.radiustech.xyz/developer-resources/tooling-configuration.md`
 - JSON-RPC API reference (EIP-7966, method support, error codes): fetch `https://docs.radiustech.xyz/developer-resources/json-rpc-api.md`
 - Fee structure and transaction costs: fetch `https://docs.radiustech.xyz/developer-resources/fees.md`
+- radius-sdk API: fetch `https://docs.radiustech.xyz/developer-resources/radius-sdk.md`
+- Accept x402 payments: fetch `https://docs.radiustech.xyz/accept-payments.md`
+- Make x402 payments: fetch `https://docs.radiustech.xyz/make-payments.md`
 - x402 protocol integration + facilitator patterns: fetch `https://docs.radiustech.xyz/developer-resources/x402-integration.md`
 - Full Radius documentation corpus: fetch `https://docs.radiustech.xyz/llms-full.txt`
 
