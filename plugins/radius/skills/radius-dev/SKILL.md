@@ -1,6 +1,6 @@
 ---
 name: radius-dev
-description: End-to-end Radius Network development playbook. Stablecoin-native EVM with sub-second finality. Uses plain viem (defineChain, createPublicClient, createWalletClient) for all TypeScript integration. wagmi for React wallet integration. Foundry for smart contract development and testing. Also covers Hardhat/ethers.js compatibility and EIP-7966 synchronous transactions. Micropayment patterns (pay-per-visit content, real-time API metering, streaming payments), x402 protocol integration, Radius x402 facilitators (Permit2 + EIP-2612), stablecoin-native fees via Turnstile, ERC-20 operations, event watching, production gotchas, and EVM compatibility differences from Ethereum.
+description: End-to-end Radius Network development playbook. Stablecoin-native EVM with sub-second finality. Uses plain viem (defineChain, createPublicClient, createWalletClient) for ordinary chain integration and radius-sdk for x402 application payments. wagmi for React wallet integration. Foundry for smart contract development and testing. Also covers Hardhat/ethers.js compatibility and EIP-7966 synchronous transactions. Micropayment patterns (pay-per-visit content, real-time API metering, streaming payments), x402 protocol integration, Radius x402 facilitators (Permit2 + EIP-2612), stablecoin-native fees via Turnstile, ERC-20 operations, event watching, production gotchas, and EVM compatibility differences from Ethereum.
 published: true
 user-invocable: true
 ---
@@ -28,7 +28,9 @@ Use this Skill when the user asks for:
 - Use `defineChain` from viem to create the Radius chain definition.
 - Use `createPublicClient` for reads, `createWalletClient` for writes.
 - Use viem's native `watchContractEvent`, `getLogs`, and `watchBlockNumber` for event monitoring.
-- Do NOT use `@radiustechsystems/sdk` — it is deprecated. Use plain viem for everything.
+- Do NOT use `@radiustechsystems/sdk` — it is deprecated and unrelated to
+  `radius-sdk`. Use plain viem for ordinary chain interactions and `radius-sdk`
+  only for x402 application payments.
 - ethers.js v6 also works with no overrides. This skill defaults to viem for examples.
 
 2) **UI: wagmi + @tanstack/react-query for React apps**
@@ -100,10 +102,10 @@ wallet handling.
   ```
   `--x402-threshold` is a display-unit limit such as SBC, not a raw 6-decimal
   integer. Do not omit it in automated agent flows.
-- **App code and embedded integrations:** use viem directly
-  (`createPublicClient`, `createWalletClient`, `privateKeyToAccount`) and load
-  keys from environment variables or a secrets manager. Never inline or log
-  private keys.
+- **App code and embedded integrations:** use viem directly for ordinary chain
+  interactions. For x402 application payments, use `radius-sdk/client` and
+  provide a viem account, `WalletClient`, or secret-manager-backed key as the
+  signer. Never inline or log private keys.
 - **Smart contract development and advanced EVM workflows:** use Foundry
   (`forge`/`cast`) for contract builds, tests, deployment scripts, low-level
   contract reads, and debugging. Foundry is no longer the default agent wallet
@@ -155,6 +157,7 @@ Always keep these in mind when writing code for Radius:
 | Returned tx hash | Submitted tx that will eventually mine | "Queued" — a future-nonce tx waits for the gap to fill; poll for the receipt, it's not a mine commitment |
 | `eth_gasPrice` | Market rate | Fixed gas price (~986M wei) |
 | `eth_maxPriorityFeePerGas` | Suggested priority fee | Same as `eth_gasPrice` (no priority fee bidding) |
+| Turnstile simulation in `eth_call` / `eth_estimateGas` | No Radius Turnstile | Runs only when `gas_price × gas_limit + value > 0`; a zero-cost simulation returns the unmodified balance |
 | `eth_getBalance` | Native ETH balance | Native + convertible USD balance |
 | Execution primitive | Block (globally sequenced) | Transaction (blocks reconstructed on demand) |
 | `eth_blockNumber` | Monotonic block height | Current timestamp in milliseconds |
@@ -162,7 +165,7 @@ Always keep these in mind when writing code for Radius:
 | Block hash | Hash of block header | Equals block number (timestamp-based) |
 | `transactionIndex` | Position in block | Receipt always reports `0` — not a unique key; use `transactionHash` |
 | On-chain randomness (`blockhash`, `prevrandao`, `difficulty`) | `prevrandao` carries RANDAO mix | Not a randomness source: `prevrandao`/`difficulty` = `0`, `blockhash` predictable, no EIP-2935 — use off-chain entropy |
-| `eth_getLogs` | Address filter optional | Address filter **required** (error `-33014`) |
+| `eth_getLogs` | Address filter optional | Historical queries supported; address filter **required** (error `-33014`) and range capped at 1,000,000 block units (error `-33002`) |
 | `eth_getProof` | Merkle state proofs | Unsupported (error `-33000`) — instant-final state model, no proofs needed |
 | `eth_getBlockReceipts` | All receipts in a block | Unsupported (error `-33000`) — txs executed individually, not in blocks |
 | `eth_sendRawTransactionSync` | EIP-7966 sync tx submission (returns the receipt directly) | On Radius the receipt is **instant + final** (~100ms, no reorg) vs an L2 inclusion receipt (~460ms, reorg-able) |
@@ -208,7 +211,7 @@ Standard ERC-20 interactions, storage operations, and events work unchanged.
 - Smart contracts: Foundry (`forge` / `cast`) + OpenZeppelin
 - Agent wallet and terminal execution: `radius-cli`
 - Micropayments: viem + server-side verification + wallet integration
-- x402: Middleware pattern with Radius facilitator for settlement (Permit2 or EIP-2612) — see the **x402** skill for full implementation details
+- x402: `radius-sdk/hono` for sellers and `radius-sdk/client` for TypeScript buyers; use `radius-cli wallet x402` for agent shells — see the **x402** skill
 
 ### 3. Implement with Radius-specific correctness
 Always be explicit about:
@@ -227,6 +230,8 @@ Before shipping, review [gotchas.md](references/gotchas.md) for:
 - Nonce management for unmanaged concurrent sends from one wallet (contiguous-nonce batches like `forge script --broadcast` need no special handling)
 - Replace-by-fee applies only to still-queued future-nonce txs (higher gas); fee-bumping a current-nonce tx has no equivalent — rely on instant finality
 - A returned tx hash means "queued," not "will execute" — poll for the receipt and fill nonce gaps
+- Turnstile balance simulations run only when `gas_price × gas_limit + value > 0`; do not subtract an expected conversion cost from zero-cost `eth_call` results
+- Pending-pool rejections now return reason-specific message text; match the relevant reason instead of assuming one generic message
 - Block number is a timestamp (use BigInt, never parseInt)
 - A single receipt read can briefly lag a just-executed tx — poll, don't single-read
 - EIP-2612 permit domain must match exactly: `{ name: "Stable Coin", version: "1" }`
@@ -258,6 +263,9 @@ When you implement changes, provide:
 - Tooling configuration (Foundry, viem, wagmi, Hardhat, ethers.js): fetch `https://docs.radiustech.xyz/developer-resources/tooling-configuration.md`
 - JSON-RPC API reference (EIP-7966, method support, error codes): fetch `https://docs.radiustech.xyz/developer-resources/json-rpc-api.md`
 - Fee structure and transaction costs: fetch `https://docs.radiustech.xyz/developer-resources/fees.md`
+- radius-sdk API: fetch `https://docs.radiustech.xyz/developer-resources/radius-sdk.md`
+- Accept x402 payments: fetch `https://docs.radiustech.xyz/accept-payments.md`
+- Make x402 payments: fetch `https://docs.radiustech.xyz/make-payments.md`
 - x402 protocol integration + facilitator patterns: fetch `https://docs.radiustech.xyz/developer-resources/x402-integration.md`
 - Full Radius documentation corpus: fetch `https://docs.radiustech.xyz/llms-full.txt`
 

@@ -197,6 +197,8 @@ const unwatch = publicClient.watchEvent({
 
 ## Query historical logs
 
+Historical `eth_getLogs` queries are available, including older indexed events. This is separate from historical state reads, which Radius does not support. Every log query still needs an address filter and must stay within the range limit described below.
+
 ### Basic log query
 
 ```typescript

@@ -1,598 +1,132 @@
-# x402 Server-Side Implementation
+# Accept x402 Payments with `radius-sdk`
 
-This reference provides everything needed to add x402 payment gating to any HTTP server. The core module is framework-agnostic — it takes a standard `Request` and returns a typed outcome that you map to your framework's response.
+Use `radius-sdk/hono` for Hono applications and Cloudflare Workers. It creates
+x402 challenges, verifies and settles paid requests through the configured
+facilitator, and exposes the payment receipt to handlers. Do not hand-roll the
+challenge or `/verify` and `/settle` flow for ordinary integrations.
 
-**Only dependency:** `viem` (for types only — the module itself uses only `fetch` and `atob`).
-
----
-
-## Types
-
-```typescript
-/** Configuration for x402 payment gating. One per app. */
-export interface X402Config {
-  /** SBC token contract address */
-  asset: string;
-  /** CAIP-2 chain identifier (e.g. "eip155:723487") */
-  network: string;
-  /** Wallet address that receives payments */
-  payTo: string;
-  /** Facilitator service base URL */
-  facilitatorUrl: string;
-  /** Payment amount in raw token units (6 decimals: "100" = 0.0001 SBC) */
-  amount: string;
-  /** Optional API key for the facilitator */
-  facilitatorApiKey?: string;
-  /** ERC-2612 permit domain name (default: "Stable Coin") */
-  tokenName?: string;
-  /** ERC-2612 permit domain version (default: "1") */
-  tokenVersion?: string;
-  /** HTTP header carrying the payment (default: "PAYMENT-SIGNATURE") */
-  paymentHeader?: string;
-}
-
-/** A single payment requirement in the 402 response */
-export interface PaymentRequirement {
-  scheme: string;
-  network: string;
-  amount: string;
-  asset: string;
-  payTo: string;
-  maxTimeoutSeconds: number;
-  extra: {
-    name: string;
-    version: string;
-    assetTransferMethod: string;
-  };
-}
-
-/** The x402 v2 payment-required object sent in the PAYMENT-REQUIRED header. */
-export interface PaymentRequired {
-  x402Version: 2;
-  error: string;
-  resource: {
-    url: string;
-    description?: string;
-    mimeType?: string;
-  };
-  accepts: PaymentRequirement[];
-  extensions?: Record<string, unknown>;
-}
-
-/** Settlement metadata sent in the PAYMENT-RESPONSE header. */
-export interface SettlementResponse {
-  success: boolean;
-  transaction?: string;
-  txHash?: string;
-  transactionHash?: string;
-  hash?: string;
-  payer?: string;
-  network: string;
-  errorReason?: string;
-}
-
-/** Options for processPayment behavior */
-export interface PaymentOptions {
-  /** Skip the verify step, go straight to settle */
-  skipVerify?: boolean;
-  /** Fire-and-forget settle: return before settlement confirms */
-  asyncSettle?: boolean;
-}
-
-/** Every possible outcome of processPayment */
-export type PaymentOutcome =
-  | { status: 'no-payment'; paymentRequired: PaymentRequired }
-  | { status: 'invalid-header' }
-  | { status: 'verify-failed'; detail: any }
-  | { status: 'verify-unreachable'; detail: string }
-  | { status: 'settle-failed'; detail: any }
-  | { status: 'settle-unreachable'; detail: string }
-  | { status: 'settled'; txHash: string | undefined; settlementResponse: SettlementResponse; verifyMs: number; settleMs: number; totalMs: number }
-  | { status: 'settle-pending'; verifyMs: number; totalMs: number };
-```
-
----
-
-## Core functions
-
-### buildPaymentRequired
-
-Constructs the x402 v2 `PaymentRequired` object sent to clients in the `PAYMENT-REQUIRED` header.
-
-```typescript
-export function buildPaymentRequirement(config: X402Config): PaymentRequirement {
-  return {
-    scheme: 'exact',
-    network: config.network,
-    amount: config.amount,
-    asset: config.asset,
-    payTo: config.payTo,
-    maxTimeoutSeconds: 300,
-    extra: {
-      name: config.tokenName ?? 'Stable Coin',
-      version: config.tokenVersion ?? '1',
-      assetTransferMethod: 'permit2',
-    },
-  };
-}
-
-export function buildEip2612GasSponsoringExtension() {
-  return {
-    info: {
-      description: 'The facilitator accepts EIP-2612 gasless Permit to the canonical Permit2 contract.',
-      version: '1',
-    },
-    schema: {
-      $schema: 'https://json-schema.org/draft/2020-12/schema',
-      type: 'object',
-      properties: {
-        info: {
-          type: 'object',
-          properties: {
-            from: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' },
-            asset: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' },
-            spender: { type: 'string', pattern: '^0x[a-fA-F0-9]{40}$' },
-            amount: { type: 'string', pattern: '^[0-9]+$' },
-            nonce: { type: 'string', pattern: '^[0-9]+$' },
-            deadline: { type: 'string', pattern: '^[0-9]+$' },
-            signature: { type: 'string', pattern: '^0x[a-fA-F0-9]+$' },
-            version: { type: 'string', pattern: '^[0-9]+(\\.[0-9]+)*$' },
-          },
-          required: ['from', 'asset', 'spender', 'amount', 'nonce', 'deadline', 'signature', 'version'],
-        },
-      },
-      required: ['info'],
-    },
-  };
-}
-
-export function buildPaymentRequired(config: X402Config, request: Request): PaymentRequired {
-  return {
-    x402Version: 2,
-    error: 'PAYMENT-SIGNATURE header is required',
-    resource: {
-      url: request.url,
-      description: `Access to ${new URL(request.url).pathname}`,
-      mimeType: 'application/json',
-    },
-    accepts: [buildPaymentRequirement(config)],
-    extensions: {
-      eip2612GasSponsoring: buildEip2612GasSponsoringExtension(),
-    },
-  };
-}
-```
-
-### processPayment
-
-The core x402 flow. Call this for every protected route.
-
-```typescript
-export async function processPayment(
-  config: X402Config,
-  request: Request,
-  options?: PaymentOptions,
-  ctx?: { waitUntil: (p: Promise<any>) => void },
-): Promise<PaymentOutcome> {
-  const headerName = config.paymentHeader ?? 'PAYMENT-SIGNATURE';
-  const paymentHeader = request.headers.get(headerName);
-
-  // No payment header -> return requirements for the PAYMENT-REQUIRED header.
-  if (!paymentHeader) {
-    return { status: 'no-payment', paymentRequired: buildPaymentRequired(config, request) };
-  }
-
-  // Decode the base64-encoded payment payload.
-  // This is the ENTIRE client payload (x402Version, scheme, resource, accepted, payload, extensions).
-  // Send the full object to the facilitator as paymentPayload — not just the inner .payload field.
-  let paymentPayload: any;
-  try {
-    paymentPayload = JSON.parse(atob(paymentHeader));
-  } catch {
-    return { status: 'invalid-header' };
-  }
-
-  // Build facilitator request
-  const facilitatorHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (config.facilitatorApiKey) {
-    facilitatorHeaders['X-API-Key'] = config.facilitatorApiKey;
-  }
-
-  const facilitatorBody = JSON.stringify({
-    x402Version: 2,
-    paymentPayload,
-    paymentRequirements: buildPaymentRequirement(config),
-  });
-
-  const t0 = Date.now();
-  let verifyMs = 0;
-
-  // Verify with facilitator (unless skipVerify)
-  if (!options?.skipVerify) {
-    let verifyRes: Response;
-    try {
-      verifyRes = await fetch(`${config.facilitatorUrl}/verify`, {
-        method: 'POST',
-        headers: facilitatorHeaders,
-        body: facilitatorBody,
-      });
-    } catch (e: any) {
-      return { status: 'verify-unreachable', detail: e.message };
-    }
-    verifyMs = Date.now() - t0;
-
-    const verifyData: any = await readFacilitatorJson(verifyRes);
-    if (!verifyRes.ok || !verifyData.isValid) {
-      return { status: 'verify-failed', detail: verifyData };
-    }
-  }
-
-  // Async settle — fire-and-forget, return immediately
-  if (options?.asyncSettle) {
-    const settlePromise = fetch(`${config.facilitatorUrl}/settle`, {
-      method: 'POST',
-      headers: facilitatorHeaders,
-      body: facilitatorBody,
-    })
-      .then(readFacilitatorJson)
-      .catch(() => {});
-
-    if (ctx) ctx.waitUntil(settlePromise);
-    return { status: 'settle-pending', verifyMs, totalMs: Date.now() - t0 };
-  }
-
-  // Synchronous settle — wait for on-chain confirmation
-  const t1 = Date.now();
-  let settleRes: Response;
-  try {
-    settleRes = await fetch(`${config.facilitatorUrl}/settle`, {
-      method: 'POST',
-      headers: facilitatorHeaders,
-      body: facilitatorBody,
-    });
-  } catch (e: any) {
-    return { status: 'settle-unreachable', detail: e.message };
-  }
-  const settleMs = Date.now() - t1;
-
-  const settleData: any = await readFacilitatorJson(settleRes);
-  if (!settleRes.ok || !settleData.success) {
-    return { status: 'settle-failed', detail: settleData };
-  }
-
-  // Facilitator may return tx hash under different field names
-  const txHash =
-    settleData.transaction ??
-    settleData.txHash ??
-    settleData.transactionHash ??
-    settleData.hash;
-
-  return { status: 'settled', txHash, settlementResponse: settleData, verifyMs, settleMs, totalMs: Date.now() - t0 };
-}
-```
-
----
-
-## Helpers
-
-```typescript
-/** CORS headers that include the payment header. */
-export function corsHeaders(config?: Partial<X402Config>): Record<string, string> {
-  const header = config?.paymentHeader ?? 'PAYMENT-SIGNATURE';
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': `Content-Type, ${header}`,
-    'Access-Control-Expose-Headers': 'PAYMENT-REQUIRED, PAYMENT-RESPONSE',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  };
-}
-
-/** Base64-encode JSON in browser, Workers, or Node.js runtimes. */
-export function encodeBase64Json(data: unknown): string {
-  const json = JSON.stringify(data);
-  if (typeof btoa === 'function') return btoa(json);
-  return Buffer.from(json, 'utf8').toString('base64');
-}
-
-/** JSON response with CORS headers. */
-export function jsonResponse(
-  data: unknown,
-  status = 200,
-  config?: Partial<X402Config>,
-  extraHeaders: Record<string, string> = {},
-): Response {
-  return Response.json(data, {
-    status,
-    headers: { ...corsHeaders(config), 'Content-Type': 'application/json', ...extraHeaders },
-  });
-}
-
-/** Parse JSON if present; preserve status/body details for facilitator errors. */
-async function readFacilitatorJson(response: Response): Promise<any> {
-  const text = await response.text();
-  if (!text) return { status: response.status, ok: response.ok };
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { status: response.status, ok: response.ok, body: text };
-  }
-}
-```
-
----
-
-## Integration: handling all outcome states
-
-After calling `processPayment()`, map every outcome to the correct HTTP response:
-
-```typescript
-async function handlePaidRequest(request: Request, config: X402Config): Promise<Response> {
-  const url = new URL(request.url);
-  const outcome = await processPayment(config, request);
-
-  switch (outcome.status) {
-    case 'no-payment':
-      return jsonResponse({}, 402, config, {
-        'PAYMENT-REQUIRED': encodeBase64Json(outcome.paymentRequired),
-      });
-
-    case 'invalid-header':
-      return jsonResponse({ error: 'Invalid PAYMENT-SIGNATURE header' }, 400, config);
-
-    case 'verify-failed':
-      return jsonResponse(
-        { error: 'Payment verification failed', detail: outcome.detail },
-        402,
-        config,
-        { 'PAYMENT-REQUIRED': encodeBase64Json(buildPaymentRequired(config, request)) },
-      );
-
-    case 'verify-unreachable':
-    case 'settle-unreachable':
-      return jsonResponse(
-        { error: 'Facilitator unavailable', detail: outcome.detail },
-        502,
-        config,
-      );
-
-    case 'settle-failed':
-      return jsonResponse(
-        { error: 'Settlement failed', detail: outcome.detail },
-        402,
-        config,
-        { 'PAYMENT-RESPONSE': encodeBase64Json(outcome.detail) },
-      );
-
-    case 'settle-pending':
-      return jsonResponse({ message: 'Payment accepted', path: url.pathname }, 200, config);
-
-    case 'settled':
-      // Payment accepted — return the paid content
-      // Replace with your application logic:
-      return jsonResponse({ message: 'Payment accepted', path: url.pathname }, 200, config, {
-        'PAYMENT-RESPONSE': encodeBase64Json(outcome.settlementResponse),
-      });
-  }
-}
-```
-
----
-
-## Agent checklist: gate an existing endpoint
-
-When adding x402 to an existing HTTP route, implement the payment behavior first and leave platform deployment to the user's Cloudflare, Wrangler, Railway, or hosting-specific skill.
-
-Required endpoint behavior:
-- Create an `X402Config` with the correct Radius network, SBC asset, `payTo`, facilitator URL, and 6-decimal raw amount.
-- Call `processPayment(config, request)` before returning protected content.
-- On `no-payment`, return HTTP 402 with `PAYMENT-REQUIRED: <base64-json>`.
-- On `invalid-header`, return HTTP 400.
-- On `verify-failed`, return HTTP 402 and a fresh `PAYMENT-REQUIRED` header.
-- On `verify-unreachable` or `settle-unreachable`, return HTTP 502.
-- On `settle-failed`, return HTTP 402 with `PAYMENT-RESPONSE: <base64-json>` containing facilitator failure details.
-- On `settled`, return protected content with `PAYMENT-RESPONSE: <base64-json>` containing settlement metadata.
-- Expose `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` in CORS headers for browser clients.
-- Do not choose deployment infrastructure from this skill. After local or existing-host endpoint behavior is correct, hand off deployment to the platform-specific skill. If the user explicitly asked to deploy, do not stop at "deployment is out of scope"; validate payment behavior first, then invoke or route to Cloudflare, Wrangler, Railway, or the appropriate deployment skill.
-
-Validation before deployment:
+## Install
 
 ```bash
-curl -i "$PROTECTED_URL"
+pnpm add radius-sdk hono
 ```
 
-The unpaid response should be HTTP 402 with a `PAYMENT-REQUIRED` header whose decoded JSON includes `x402Version: 2`, an `accepts` array, `extra.assetTransferMethod: "permit2"`, and `extensions.eip2612GasSponsoring`.
+The root and Hono entry points do not load viem at runtime. The middleware does
+no I/O at module scope, so it is suitable for Cloudflare Workers.
 
----
-
-## Framework integration examples
-
-### Cloudflare Worker
+## Protect routes
 
 ```typescript
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const config: X402Config = {
-      asset: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb',
-      network: 'eip155:723487',
-      payTo: env.PAYMENT_ADDRESS,
-      facilitatorUrl: 'https://facilitator.radiustech.xyz',
-      facilitatorApiKey: env.FACILITATOR_API_KEY,
-      amount: '100',
-    };
+import { Hono } from 'hono';
+import { radiusPayments, type RadiusPaymentVariables } from 'radius-sdk/hono';
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders(config) });
-    }
-
-    return handlePaidRequest(request, config);
-  },
+type Env = {
+  Bindings: { PAY_TO: `0x${string}` };
+  Variables: RadiusPaymentVariables;
 };
+
+const app = new Hono<Env>();
+
+app.use(
+  '/api/*',
+  radiusPayments<Env>({
+    network: 'testnet',
+    payTo: (c) => c.env.PAY_TO,
+    routes: {
+      'GET /api/lookup': { price: '0.001 SBC', description: 'One lookup' },
+      'POST /api/query': '0.01 SBC',
+    },
+  }),
+);
+
+app.get('/api/lookup', (c) => c.json({ result: 'ok' }));
+app.post('/api/query', (c) => c.json({ results: [] }));
+
+export default app;
 ```
 
-### Express middleware
+The server needs a recipient address, not a signing key. Route keys are
+`METHOD /path` with Hono-style `*` wildcards. Requests that match no configured
+route pass through without payment.
+
+## Options
+
+| Option | Default | Purpose |
+|---|---|---|
+| `payTo` | Required | Address or context function that selects the recipient |
+| `routes` | Required | Route map; a bare price is shorthand for `{ price }` |
+| `network` | `mainnet` | `mainnet`, `testnet`, or an explicit `RadiusNetwork` |
+| `settle` | `before` | Settle before the handler, or `after` a response below 400 |
+| `gasSponsoring` | `auto` | Advertise the facilitator's EIP-2612 gas sponsorship support |
+| `facilitator` | Radius facilitator | Hosted options or a `FacilitatorClient` |
+| `onSettled` | None | Observe every settled payment |
+
+A route may define `price`, `payTo`, `description`, `mimeType`, and
+`maxTimeoutSeconds`. Prices may be display-unit strings such as `0.001 SBC` or
+base-unit objects such as `{ amount: '1000' }`; SBC has six decimals. A price or
+recipient may be a function of the Hono context.
+
+## Read receipts
 
 ```typescript
-import express from 'express';
-
-const app = express();
-
-const config: X402Config = {
-  asset: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb',
-  network: 'eip155:723487',
-  payTo: process.env.PAYMENT_ADDRESS!,
-  facilitatorUrl: 'https://facilitator.radiustech.xyz',
-  amount: '100',
-};
-
-// x402 middleware for protected routes
-async function x402Gate(req: express.Request, res: express.Response, next: express.NextFunction) {
-  // Convert Express request to standard Request for processPayment
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (typeof value === 'string') headers.set(key, value);
-  }
-  const request = new Request(`${req.protocol}://${req.get('host')}${req.originalUrl}`, {
-    method: req.method,
-    headers,
+app.get('/api/lookup', (c) => {
+  const receipt = c.get('radiusPayment');
+  return c.json({
+    result: 'ok',
+    transaction: receipt?.transaction,
+    payer: receipt?.payer,
   });
-
-  const outcome = await processPayment(config, request);
-  res.set(corsHeaders(config));
-
-  if (outcome.status === 'settled' || outcome.status === 'settle-pending') {
-    if (outcome.status === 'settled') {
-      res.set('PAYMENT-RESPONSE', encodeBase64Json(outcome.settlementResponse));
-    }
-    next(); // Payment accepted — proceed to route handler
-    return;
-  }
-
-  // Map outcome to HTTP response
-  if (outcome.status === 'no-payment') {
-    res
-      .status(402)
-      .set('PAYMENT-REQUIRED', encodeBase64Json(outcome.paymentRequired))
-      .json({});
-  } else if (outcome.status === 'invalid-header') {
-    res.status(400).json({ error: 'Invalid PAYMENT-SIGNATURE header' });
-  } else if (outcome.status === 'verify-failed' || outcome.status === 'settle-failed') {
-    const responseHeader = outcome.status === 'settle-failed'
-      ? { 'PAYMENT-RESPONSE': encodeBase64Json(outcome.detail) }
-      : { 'PAYMENT-REQUIRED': encodeBase64Json(buildPaymentRequired(config, request)) };
-    res
-      .status(402)
-      .set(responseHeader)
-      .json({ error: 'Payment failed', detail: outcome.detail });
-  } else {
-    res.status(502).json({ error: 'Facilitator unavailable' });
-  }
-}
-
-app.get('/api/data', x402Gate, (req, res) => {
-  res.json({ data: 'your protected content here' });
 });
 ```
 
-### Node.js http
+The receipt includes `success`, `transaction`, `payer`, `amount`, `network`,
+`explorerUrl`, and failure fields when applicable. The response also carries a
+`PAYMENT-RESPONSE` header for the buyer.
+
+Use `onSettled` for centralized logging:
 
 ```typescript
-import { createServer } from 'node:http';
-
-const config: X402Config = {
-  asset: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb',
-  network: 'eip155:723487',
-  payTo: process.env.PAYMENT_ADDRESS!,
-  facilitatorUrl: 'https://facilitator.radiustech.xyz',
-  amount: '100',
-};
-
-createServer(async (req, res) => {
-  const url = new URL(req.url!, `http://${req.headers.host}`);
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (typeof value === 'string') headers.set(key, value);
-  }
-  const request = new Request(url.toString(), { method: req.method!, headers });
-
-  const outcome = await processPayment(config, request);
-
-  for (const [key, value] of Object.entries(corsHeaders(config))) {
-    res.setHeader(key, value);
-  }
-  res.setHeader('Content-Type', 'application/json');
-  if (outcome.status === 'no-payment') {
-    res.setHeader('PAYMENT-REQUIRED', encodeBase64Json(outcome.paymentRequired));
-    res.writeHead(402);
-    res.end(JSON.stringify({}));
-  } else if (outcome.status === 'settled') {
-    res.setHeader('PAYMENT-RESPONSE', encodeBase64Json(outcome.settlementResponse));
-    res.writeHead(200);
-    res.end(JSON.stringify({ data: 'your protected content' }));
-  } else if (outcome.status === 'settle-pending') {
-    res.writeHead(200);
-    res.end(JSON.stringify({ data: 'your protected content' }));
-  } else if (outcome.status === 'verify-failed' || outcome.status === 'settle-failed') {
-    if (outcome.status === 'settle-failed') {
-      res.setHeader('PAYMENT-RESPONSE', encodeBase64Json(outcome.detail));
-    } else {
-      res.setHeader('PAYMENT-REQUIRED', encodeBase64Json(buildPaymentRequired(config, request)));
-    }
-    res.writeHead(402);
-    res.end(JSON.stringify({ error: 'Payment failed', detail: outcome.detail }));
-  } else {
-    res.writeHead(outcome.status === 'invalid-header' ? 400 : 502);
-    res.end(JSON.stringify({ error: outcome.status }));
-  }
-}).listen(3000);
+radiusPayments<Env>({
+  network: 'testnet',
+  payTo: (c) => c.env.PAY_TO,
+  routes: { 'GET /api/lookup': '0.001 SBC' },
+  onSettled: (receipt, c) =>
+    console.log('paid', c.req.path, receipt.payer, receipt.transaction),
+});
 ```
 
----
+## Settlement timing
 
-## Multiple routes with different prices
+`settle: 'before'` is the SDK default. Settlement completes before the handler
+runs, so protected work is not performed for an unsettled payment. If the
+handler later fails, the payer may have paid without receiving the resource.
+Log the transaction hash with delivery failures and implement an idempotent
+retry or refund policy.
 
-```typescript
-const ROUTE_PRICES: Record<string, string> = {
-  '/api/basic':   '100',    // 0.0001 SBC
-  '/api/premium': '10000',  // 0.01 SBC
-  '/api/bulk':    '100000', // 0.1 SBC
-};
+`settle: 'after'` verifies first, runs the handler, and settles only when the
+handler returns a status below 400. This avoids charging for error responses but
+performs the handler work before payment is final.
 
-async function handleRequest(request: Request, baseConfig: X402Config): Promise<Response> {
-  const url = new URL(request.url);
-  const price = ROUTE_PRICES[url.pathname];
+## Facilitators and networks
 
-  if (!price) {
-    return jsonResponse({ error: 'Not found' }, 404);
-  }
+Mainnet is the SDK default. Use `network: 'testnet'` during Testnet development.
+The network choice switches the Radius facilitator, chain, and default asset;
+it does not switch your recipient address. Supply the correct recipient for the
+selected network.
 
-  const config = { ...baseConfig, amount: price };
-  return handlePaidRequest(request, config);
-}
-```
+For another hosted facilitator, pass `facilitator: { url, apiKey }`. The API key
+is sent as `x-api-key`. Advanced integrations may pass a `FacilitatorClient`
+from `@x402/core/server`. Query `/supported` before depending on a facilitator's
+network, transfer method, or gas-sponsoring extensions.
 
----
+## Validation checklist
 
-## Async settlement
+1. Confirm an unpaid protected route returns 402 and `PAYMENT-REQUIRED`.
+2. Confirm an unconfigured route remains free.
+3. Pay on Testnet from a different funded wallet.
+4. Confirm handler receipt fields and `PAYMENT-RESPONSE`.
+5. Confirm the settlement transaction on the selected network.
+6. Exercise handler failure under the chosen settlement mode.
 
-For lower latency, return data before on-chain settlement confirms. The facilitator still settles in the background.
-
-```typescript
-// Cloudflare Workers — use ctx.waitUntil for background settle
-const outcome = await processPayment(
-  config,
-  request,
-  { asyncSettle: true },
-  ctx, // ExecutionContext
-);
-
-// Node.js — async settle runs as a floating promise (acceptable here because
-// the facilitator is responsible for settlement, and failure doesn't affect
-// the already-verified payment)
-const outcome = await processPayment(
-  config,
-  request,
-  { asyncSettle: true },
-);
-```
+Use the low-level [facilitator API](facilitator-api.md) only for custom protocol
+work that the middleware cannot express.
