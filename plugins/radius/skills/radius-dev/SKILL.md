@@ -165,7 +165,7 @@ Always keep these in mind when writing code for Radius:
 | Block hash | Hash of block header | Equals block number (timestamp-based) |
 | `transactionIndex` | Position in block | Receipt always reports `0` — not a unique key; use `transactionHash` |
 | On-chain randomness (`blockhash`, `prevrandao`, `difficulty`) | `prevrandao` carries RANDAO mix | Not a randomness source: `prevrandao`/`difficulty` = `0`, `blockhash` predictable, no EIP-2935 — use off-chain entropy |
-| `eth_getLogs` | Address filter optional | Address filter **required** (error `-33014`) |
+| `eth_getLogs` | Address filter optional | Historical queries supported; address filter **required** (error `-33014`) and range capped at 1,000,000 block units (error `-33002`) |
 | `eth_getProof` | Merkle state proofs | Unsupported (error `-33000`) — instant-final state model, no proofs needed |
 | `eth_getBlockReceipts` | All receipts in a block | Unsupported (error `-33000`) — txs executed individually, not in blocks |
 | `eth_sendRawTransactionSync` | EIP-7966 sync tx submission (returns the receipt directly) | On Radius the receipt is **instant + final** (~100ms, no reorg) vs an L2 inclusion receipt (~460ms, reorg-able) |

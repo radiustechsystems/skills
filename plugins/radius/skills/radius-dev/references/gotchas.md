@@ -378,9 +378,9 @@ Using viem server-side in Cloudflare Workers requires compatibility_flags = ["no
 
 ## 18. `eth_getLogs` requires an address filter
 
-Unlike Ethereum, Radius **requires** an `address` field on all `eth_getLogs` calls. Omitting it returns error `-33014`.
+Historical log queries are supported on Radius. Unlike Ethereum, Radius **requires** an `address` field on all `eth_getLogs` calls. Omitting it returns error `-33014`.
 
-Additionally, the block range is capped at 1,000,000 units. Because block numbers are millisecond timestamps, this covers ~16 minutes 40 seconds (not ~1 million blocks). Exceeding this range returns error `-33002`.
+The block range is capped at 1,000,000 units. Because block numbers are millisecond timestamps, this covers ~16 minutes 40 seconds (not ~1 million blocks). Exceeding this range returns error `-33002`.
 
 ```typescript
 // WRONG — returns error -33014 on Radius
@@ -435,6 +435,8 @@ State query methods (`eth_getBalance`, `eth_call`, `eth_getCode`, `eth_getStorag
 
 - **Accepted:** `latest`, `pending`, `safe`, `finalized` — all return current state.
 - **Rejected:** Historical block numbers and `earliest` — return error `-32000`: `"required historical state unavailable, only 'latest', 'pending', 'safe', and 'finalized' are supported block tags"`.
+
+This restriction applies to historical state reads, not indexed event logs. Historical `eth_getLogs` queries remain available with the address and range constraints in [#18](#18-eth_getlogs-requires-an-address-filter).
 
 Radius does not support archive mode or historical state access.
 
