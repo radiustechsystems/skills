@@ -35,6 +35,8 @@ const price = BigInt(gasPrice); // ~986000000n (~1 gwei)
 
 Both `eth_gasPrice` and `eth_maxPriorityFeePerGas` return the correct fixed price. Standard viem fee estimation works.
 
+For `eth_call` and `eth_estimateGas`, the Turnstile runs only when `gas_price × gas_limit + value > 0`. A simulation with an effective gas price of zero and no native value performs zero Turnstile iterations, so a Turnstile-enabled wallet's `balanceOf` result is the unmodified balance. With a non-zero gas price, the simulation applies the Turnstile deduction normally. Do not subtract an assumed `TURNSTILE_TOKEN_COST` from zero-cost simulation results.
+
 ---
 
 ## 3. Wallet compatibility — MetaMask only (reliably)
@@ -173,13 +175,15 @@ async function sendWithRetry(
 
 This applies only to unmanaged concurrent sends from a single wallet — not to normal sequential sends or pre-signed contiguous-nonce batches, both of which land without special handling.
 
+Pending-pool rejection messages are reason-specific. Clients that inspect message text should match the relevant reason defensively and preserve unknown messages for diagnosis; clients that only test whether submission failed need no change. The source documentation does not publish a complete stable list of exact strings, so do not hard-code invented wording.
+
 ---
 
 ## 7b. Replace-by-fee is queued-txs-only; a returned hash means "queued," not "will execute"
 
 Radius tries to execute every transaction immediately. If a transaction's nonce is higher than the account's current nonce, it can't execute yet, so it enters a bounded "pseudo-mempool" that queues such future-nonce transactions until the gap is filled and they become executable. Two behaviors of this queue differ from Ethereum's mempool and affect ported code.
 
-**Replace-by-fee only applies to still-queued txs.** On most Ethereum nodes, resubmitting at an already-occupied nonce with higher gas replaces the pending tx — the basis for cancel / fee-bump / stuck-tx recovery. On Radius a **used** nonce (one whose tx already executed) is **rejected** — returned as the generic `-33009 Exec Failed` (not an RBF-specific code): with instant finality the tx has already executed, so there is nothing to replace (verified live). RBF *does* work for a tx still **queued** behind an unfilled future nonce — resubmitting at that nonce with a **higher** gas price swaps it in (same or lower gas is rejected; verified live). Exactly one tx per nonce executes, and it executes at the fixed system gas price — the higher gas price only wins the replacement, it is not what you pay. The Ethereum "fee-bump a stuck tx at the current nonce" pattern has no equivalent — current-nonce txs never sit pending.
+**Replace-by-fee only applies to still-queued txs.** On most Ethereum nodes, resubmitting at an already-occupied nonce with higher gas replaces the pending tx — the basis for cancel / fee-bump / stuck-tx recovery. On Radius a **used** nonce (one whose tx already executed) is **rejected**: with instant finality the tx has already executed, so there is nothing to replace (verified live). Pending-pool rejections now return distinct message text for reasons such as duplicate nonce and underpriced replacement; do not assume every rejection is the generic `-33009 Exec Failed` message. RBF *does* work for a tx still **queued** behind an unfilled future nonce — resubmitting at that nonce with a **higher** gas price swaps it in (same or lower gas is rejected; verified live). Exactly one tx per nonce executes, and it executes at the fixed system gas price — the higher gas price only wins the replacement, it is not what you pay. The Ethereum "fee-bump a stuck tx at the current nonce" pattern has no equivalent — current-nonce txs never sit pending.
 
 ```typescript
 // WRONG on Radius — "unstick" a tx by resubmitting the same nonce at higher gas.

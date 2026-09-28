@@ -157,6 +157,7 @@ Always keep these in mind when writing code for Radius:
 | Returned tx hash | Submitted tx that will eventually mine | "Queued" — a future-nonce tx waits for the gap to fill; poll for the receipt, it's not a mine commitment |
 | `eth_gasPrice` | Market rate | Fixed gas price (~986M wei) |
 | `eth_maxPriorityFeePerGas` | Suggested priority fee | Same as `eth_gasPrice` (no priority fee bidding) |
+| Turnstile simulation in `eth_call` / `eth_estimateGas` | No Radius Turnstile | Runs only when `gas_price × gas_limit + value > 0`; a zero-cost simulation returns the unmodified balance |
 | `eth_getBalance` | Native ETH balance | Native + convertible USD balance |
 | Execution primitive | Block (globally sequenced) | Transaction (blocks reconstructed on demand) |
 | `eth_blockNumber` | Monotonic block height | Current timestamp in milliseconds |
@@ -229,6 +230,8 @@ Before shipping, review [gotchas.md](references/gotchas.md) for:
 - Nonce management for unmanaged concurrent sends from one wallet (contiguous-nonce batches like `forge script --broadcast` need no special handling)
 - Replace-by-fee applies only to still-queued future-nonce txs (higher gas); fee-bumping a current-nonce tx has no equivalent — rely on instant finality
 - A returned tx hash means "queued," not "will execute" — poll for the receipt and fill nonce gaps
+- Turnstile balance simulations run only when `gas_price × gas_limit + value > 0`; do not subtract an expected conversion cost from zero-cost `eth_call` results
+- Pending-pool rejections now return reason-specific message text; match the relevant reason instead of assuming one generic message
 - Block number is a timestamp (use BigInt, never parseInt)
 - A single receipt read can briefly lag a just-executed tx — poll, don't single-read
 - EIP-2612 permit domain must match exactly: `{ name: "Stable Coin", version: "1" }`
